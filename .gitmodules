@@ -10,3 +10,9 @@
 [submodule "pad-dm-service"]
 	path = pad-dm-service
 	url = https://github.com/georgerabus/pad-dm-service
+[submodule "pad-player-service"]
+	path = pad-player-service
+	url = https://github.com/catalinacs/pad-player-service
+[submodule "pad-server-moderation-session-service"]
+	path = pad-server-moderation-session-service
+	url = https://github.com/catalinacs/pad-server-moderation-session-service
