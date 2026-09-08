@@ -16,9 +16,9 @@
 [submodule "pad-server-moderation-session-service"]
 	path = pad-server-moderation-session-service
 	url = https://github.com/catalinacs/pad-server-moderation-session-service
-[submodule "submodules/server-rules-service"]
-	path = submodules/server-rules-service
+[submodule "pad-server-rules-service"]
+	path = pad-server-rules-service
 	url = https://github.com/loredanaahsl/pad-server-rules-service.git
-[submodule "submodules/university-record-service"]
-	path = submodules/university-record-service
+[submodule "pad-university-record-service"]
+	path = pad-university-record-service
 	url = https://github.com/loredanaahsl/pad-university-record-service.git
