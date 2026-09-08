@@ -1,0 +1,12 @@
+[submodule "pad-applicant-service"]
+	path = pad-applicant-service
+	url = https://github.com/georgerabus/pad-applicant-service
+[submodule "pad-credential-service"]
+	path = pad-credential-service
+	url = https://github.com/georgerabus/pad-credential-service
+[submodule "pad-moderation-service"]
+	path = pad-moderation-service
+	url = https://github.com/georgerabus/pad-moderation-service
+[submodule "pad-dm-service"]
+	path = pad-dm-service
+	url = https://github.com/georgerabus/pad-dm-service
