@@ -55,33 +55,7 @@ It transports messages and never judges whether what is said is correct.
 
 ![Architecture Diagram](docs/images/Architecture_Diagram.png)
 
-### Service Relationships
-
-Arrows point from the service that initiates a call to the service it calls. The
-diagram uses three arrow styles, matching the three transports defined below:
-**solid** = synchronous REST, **dashed** = asynchronous event (RabbitMQ),
-**double** = WebSocket surface. If the rendered PNG does not yet show all three
-styles, this text is the source of truth until the image is regenerated.
-
-Server Moderation Session Service runs the shift: it validates players on join
-(REST → Player), requests the next applicant (REST → Applicant), publishes shift
-results to Player (event), and answers the access checks from University Record
-Service and Discord DMs Service (REST), since it owns the role to access mapping.
-It does not gather applicant data itself.
-
-Moderation Service does that instead. It fetches ground truth from University
-Record Service (REST) and the current rule set from Server Rules Service, has the
-decision evaluated there (REST), and reports the outcome back to the session as an
-event so score and penalties update.
-
-Applicant Service is the fixed entry point for new applicants, propagating each
-one to Credential Service and University Record Service as an event
-(`ApplicantSeed`). The spec allows any of the three to be contacted first; we
-fixed Applicant Service as the entry point for implementation simplicity, so the
-other two never talk to each other.
-
-Player Service sits at the edge and only ever hears from Session Service. Discord
-DMs Service only transports messages, and never talks to Moderation Service.
+The diagram illustrates a server moderation and applicant management architecture. At its core, the Server Moderation Session Service coordinates interactions between the player, moderation, Discord, and applicant systems. When a player joins, their access is validated, while the Moderation Service checks server rules, retrieves university records, and reports moderation outcomes. The session service also manages the applicant process by requesting applicants and checking their records. Within the Applicant Data Cluster, the Applicant Service communicates with the University Record and Credential Services to store and distribute applicant information. The Player Client ultimately interacts with the system through the Discord DM and Player Services.
 
 ## Technologies and Communication Patterns
 
