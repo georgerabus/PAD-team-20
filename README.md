@@ -59,10 +59,15 @@ The diagram illustrates a server moderation and applicant management architectur
 
 ## Technologies and Communication Patterns
 
-We work in two languages, split by the nature of the work rather than by
-person: the services that coordinate the game and push real-time updates are
-written in **TypeScript (NestJS)**, and the services that generate, store and
-validate data are written in **PHP (Laravel)**.
+We work in two languages, and the split follows the service pairs each of us
+owns: two of us write our two services in **TypeScript (NestJS)**, the other two
+write theirs in **PHP (Laravel)**. The pairs were drawn so that the language
+boundary mostly falls along a natural seam in the system — the services that
+coordinate the game and push real-time updates (Session, Moderation, Discord
+DMs) are TypeScript, and the services that generate, store and validate data
+(Applicant + Credential, Server Rules + University Record) are PHP. The one
+exception is Player, which is TypeScript because it shares an owner with
+Session (see below). Nobody has to switch stacks mid-semester.
 
 TypeScript/NestJS earns its place on the real-time and orchestration cluster.
 NestJS ships WebSocket gateways and a built-in microservice/event transport, so
@@ -70,11 +75,19 @@ the two real-time surfaces (moderator chat, live session state) and the event
 fan-out come from the framework instead of being bolted on. Its type system
 also keeps the heavily typed contract below honest at compile time.
 
-PHP/Laravel earns its place on the data cluster. These services are mostly CRUD
-and payload validation — generate a coherent (and often deliberately
+Player Service is TypeScript for an ownership reason, not a technical one. On
+its own it is CRUD, JWT issuance and one event consumer, and would sit
+comfortably in Laravel — it started there. It moved because the same teammate
+owns Player and Session, and Session has to be TypeScript. One person on one
+stack is worth more than the marginally better fit, and the contract between
+them (`validate` and `ShiftCompleted`) is small enough that nothing is lost
+either way.
+
+PHP/Laravel earns its place on the data cluster. These four services are mostly
+CRUD and payload validation — generate a coherent (and often deliberately
 inconsistent) applicant, store records, check a document against a schema — and
 Eloquent together with Laravel's form-request validation cover exactly that with
-little ceremony. It is also the stack the team is fastest in, which matters
+little ceremony. It is also the stack their owners are fastest in, which matters
 under a weekly lab cadence: a working, well-understood service beats a
 marginally lighter one we have to fight. The trade-off is that Laravel is a
 heavier runtime than a PHP microframework, and PHP is weaker at long-lived
@@ -90,7 +103,7 @@ contract, which is the one thing Lab 0 exists to force us to get right.
 
 | Service | Language / Framework | Datastore | Talks via | Why |
 |---|---|---|---|---|
-| Player | PHP / Laravel | PostgreSQL | REST, consumes events | Relational identity data (friends, levels); pure CRUD |
+| Player | TypeScript / NestJS | PostgreSQL | REST, consumes events | Identity, friends and levels; same owner as Session, so same stack |
 | Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket, events | Orchestrates the shift, pushes live state, owns role→access |
 | Applicant | PHP / Laravel | PostgreSQL | REST, publishes events | Generates the applicant story, including the deception |
 | Credential | PHP / Laravel | PostgreSQL | REST, consumes events | Document generation and structural validation |
