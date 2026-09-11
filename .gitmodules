@@ -6,10 +6,7 @@
 	url = https://github.com/georgerabus/pad-credential-service
 [submodule "pad-moderation-service"]
 	path = pad-moderation-service
-	url = https://github.com/georgerabus/pad-moderation-service
-[submodule "pad-dm-service"]
-	path = pad-dm-service
-	url = https://github.com/georgerabus/pad-dm-service
+	url = https://github.com/augustin-ploteanu/moderation-service
 [submodule "pad-player-service"]
 	path = pad-player-service
 	url = https://github.com/catalinacs/pad-player-service
@@ -22,3 +19,6 @@
 [submodule "pad-university-record-service"]
 	path = pad-university-record-service
 	url = https://github.com/loredanaahsl/pad-university-record-service.git
+[submodule "pad-dm-service"]
+	path = pad-dm-service
+	url = https://github.com/augustin-ploteanu/dm-service
