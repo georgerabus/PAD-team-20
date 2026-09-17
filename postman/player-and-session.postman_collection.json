@@ -1,0 +1,535 @@
+{
+  "info": {
+    "name": "Player & Server Moderation Session",
+    "description": "Runs top to bottom as one story: two players register, a team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, and the result is read back. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nBefore running, set the `serviceSecret` variable to the SERVICE_SECRET from Session Service's .env. Start Player Service on port 3000 and Session Service on port 3001.\n\nWS /sessions/{id}/live is not included: a WebSocket is not part of a collection export. Connect to ws://localhost:3001/sessions/<sessionId>/live?token=<sessionToken> to watch the same shift live.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "playerBaseUrl", "value": "http://localhost:3000" },
+    { "key": "sessionBaseUrl", "value": "http://localhost:3001" },
+    { "key": "serviceSecret", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Player Service",
+      "item": [
+        {
+          "name": "Register moderator",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh username and email each run, so re-running never hits 409.",
+                  "pm.collectionVariables.set('moderatorName', 'moderator' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('moderatorId', body.playerId);",
+                  "pm.collectionVariables.set('moderatorToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/register",
+              "host": ["{{playerBaseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{moderatorName}}\",\n  \"email\": \"{{moderatorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Register junior mod",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.collectionVariables.set('juniorName', 'juniormod' + Date.now());"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('juniorId', body.playerId);",
+                  "pm.collectionVariables.set('juniorToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/register",
+              "host": ["{{playerBaseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{juniorName}}\",\n  \"email\": \"{{juniorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('moderatorToken', body.token);",
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/login",
+              "host": ["{{playerBaseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{moderatorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Refresh token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "// The refresh token is single use: this one is now spent.",
+                  "pm.collectionVariables.set('moderatorToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/refresh",
+              "host": ["{{playerBaseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" }
+          }
+        },
+        {
+          "name": "Get own profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('is the caller', () => pm.expect(pm.response.json().playerId).to.eql(pm.collectionVariables.get('moderatorId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorToken}}" }],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
+              "host": ["{{playerBaseUrl}}"],
+              "path": ["players", "{{moderatorId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update own profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('displayName saved', () => pm.expect(pm.response.json().displayName).to.eql('Ana Rusu'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{moderatorToken}}" }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
+              "host": ["{{playerBaseUrl}}"],
+              "path": ["players", "{{moderatorId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Ana Rusu\",\n  \"avatar\": \"https://utm.md/avatar.png\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Server Moderation Session Service",
+      "item": [
+        {
+          "name": "Open session (internal, from Player)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('starts in the lobby', () => pm.expect(body.status).to.eql('lobby'));",
+                  "pm.collectionVariables.set('sessionId', body.sessionId);",
+                  "// The moderator's session token, which Player hands back to its client.",
+                  "pm.collectionVariables.set('moderatorSessionToken', body.sessionToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Service-Secret", "value": "{{serviceSecret}}" }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"teamId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"members\": [\n    { \"playerId\": \"{{moderatorId}}\", \"level\": 3 },\n    { \"playerId\": \"{{juniorId}}\", \"level\": 1 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Junior mod joins",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('joins as junior mod', () => pm.expect(body.role).to.eql('junior_mod'));",
+                  "pm.collectionVariables.set('juniorSessionToken', body.sessionToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{juniorToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/join",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "join"]
+            }
+          }
+        },
+        {
+          "name": "Assign roles",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/roles",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "roles"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assignments\": [\n    {\n      \"playerId\": \"{{juniorId}}\",\n      \"role\": \"junior_mod\",\n      \"recordAccess\": [\"enrollment\", \"emails\"],\n      \"channelAccess\": [\"enrollment-check\", \"general-mod-chat\"]\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Start shift",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('now active', () => pm.expect(body.status).to.eql('active'));",
+                  "pm.test('carries a rule set version', () => pm.expect(body.ruleSetVersion).to.be.a('number'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/start",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "start"]
+            }
+          }
+        },
+        {
+          "name": "Re-issue session token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json().sessionToken;",
+                  "pm.collectionVariables.set('juniorSessionToken', token);",
+                  "// What a client does after shift_started: pick up its recordAccess.",
+                  "const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());",
+                  "pm.test('now carries recordAccess', () => pm.expect(claims.recordAccess).to.include('enrollment'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{juniorToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/token",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "token"]
+            }
+          }
+        },
+        {
+          "name": "Next applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('applicantId', pm.response.json().applicantId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/next-applicant",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "next-applicant"]
+            }
+          }
+        },
+        {
+          "name": "Current applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('is the one just called', () => pm.expect(pm.response.json().applicantId).to.eql(pm.collectionVariables.get('applicantId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{juniorSessionToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/current-applicant",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "current-applicant"]
+            }
+          }
+        },
+        {
+          "name": "Report outcome (internal, from Moderation)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Service-Secret", "value": "{{serviceSecret}}" }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/outcomes",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "outcomes"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{applicantId}}\",\n  \"correct\": true,\n  \"penalty\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Session state",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('one application processed', () => pm.expect(body.applicationsProcessed).to.eql(1));",
+                  "pm.test('score moved', () => pm.expect(body.score).to.eql(10));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Channel access-check (internal, from Discord DMs)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('assigned channel is allowed', () => pm.expect(pm.response.json().allowed).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Service-Secret", "value": "{{serviceSecret}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "access-check"],
+              "query": [
+                { "key": "playerId", "value": "{{juniorId}}" },
+                { "key": "channel", "value": "enrollment-check" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "End shift",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('one correct decision', () => pm.expect(body.correctDecisions).to.eql(1));",
+                  "pm.test('both players in the result', () => pm.expect(body.perPlayer).to.have.lengthOf(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/end",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "end"]
+            }
+          }
+        },
+        {
+          "name": "Session results",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('same result as end returned', () => pm.expect(pm.response.json().sessionId).to.eql(pm.collectionVariables.get('sessionId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{juniorSessionToken}}" }],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/results",
+              "host": ["{{sessionBaseUrl}}"],
+              "path": ["sessions", "{{sessionId}}", "results"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
