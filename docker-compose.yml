@@ -1,0 +1,113 @@
+# Runs the system from the images published on Docker Hub.
+#
+# Every service owns its own PostgreSQL database, which only that service can
+# reach: the databases publish no ports and sit on the service's own network.
+#
+# Before the first `docker compose up`:
+#   1. cp .env.example .env, and fill in every value
+#   2. generate the RS256 keypairs the two token issuers sign with:
+#        mkdir -p keys/player keys/session
+#        openssl genrsa -out keys/player/private.pem 2048
+#        openssl rsa -in keys/player/private.pem -pubout -out keys/player/public.pem
+#        openssl genrsa -out keys/session/private.pem 2048
+#        openssl rsa -in keys/session/private.pem -pubout -out keys/session/public.pem
+#
+# Database schemas live in db/<service>/ and run on the first start of an
+# empty volume.
+
+name: pad-team-20
+
+services:
+  # ---- Player Service ----
+  player-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: player
+      POSTGRES_USER: player
+      POSTGRES_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
+    volumes:
+      - player-db-data:/var/lib/postgresql/data
+      - ./db/player:/docker-entrypoint-initdb.d:ro
+    networks: [player]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U player -d player"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  player:
+    image: catalinasiminiuc/pad-player-service:1.1.1
+    depends_on:
+      player-db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      DB_HOST: player-db
+      DB_PORT: 5432
+      DB_NAME: player
+      DB_USER: player
+      DB_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
+    volumes:
+      - ./keys/player:/app/keys:ro
+    ports:
+      - "3000:3000"
+    networks: [player, backend]
+    restart: unless-stopped
+
+  # ---- Server Moderation Session Service ----
+  session-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: session
+      POSTGRES_USER: session
+      POSTGRES_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
+    volumes:
+      - session-db-data:/var/lib/postgresql/data
+      - ./db/session:/docker-entrypoint-initdb.d:ro
+    networks: [session]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U session -d session"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  session:
+    image: catalinasiminiuc/pad-server-moderation-session-service:1.1.1
+    depends_on:
+      session-db:
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      # Player's public key, so player tokens are validated without calling Player.
+      PLAYER_JWT_PUBLIC_KEY_PATH: /app/player-keys/public.pem
+      SERVICE_SECRET: ${SERVICE_SECRET:?set SERVICE_SECRET in .env}
+      DB_HOST: session-db
+      DB_PORT: 5432
+      DB_NAME: session
+      DB_USER: session
+      DB_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
+    volumes:
+      - ./keys/session:/app/keys:ro
+      # Only Player's public key, never its private one.
+      - ./keys/player/public.pem:/app/player-keys/public.pem:ro
+    ports:
+      - "3001:3001"
+    networks: [session, backend]
+    restart: unless-stopped
+
+# One private network per service for its database, and a shared one the
+# services use to reach each other.
+networks:
+  backend:
+  player:
+  session:
+
+volumes:
+  player-db-data:
+  session-db-data:
