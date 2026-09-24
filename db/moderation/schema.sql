@@ -10,8 +10,11 @@ CREATE TABLE IF NOT EXISTS decisions (
   applicant_id   UUID        NOT NULL,
   moderator_id   UUID        NOT NULL,
   action         TEXT        NOT NULL CHECK (action IN ('accept', 'reject', 'flag', 'ban')),
+  correct        BOOLEAN     NOT NULL DEFAULT false,
   violated_rules JSONB       NOT NULL DEFAULT '[]',
   penalty        INTEGER     NOT NULL DEFAULT 0,
+  outcome        TEXT        NOT NULL DEFAULT 'correct'
+                             CHECK (outcome IN ('correct', 'wrong_admit', 'wrong_reject', 'missed_ban')),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
