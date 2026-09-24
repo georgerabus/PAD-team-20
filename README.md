@@ -722,8 +722,13 @@ is empty. To start from an empty database, remove the volumes:
 
 Player answers on `http://localhost:3000` and Session on
 `http://localhost:3001`. The Postman collections under `postman/` exercise the
-endpoints; set each collection's `serviceSecret` variable to the
+endpoints. For the Player/Session collection, set `serviceSecret` to the
 `SERVICE_SECRET` from your `.env`.
+
+The Server Rules and University Record collections target the local Laravel
+lab mocks on ports 8001 and 8002. They use public fixture tokens instead of
+`SERVICE_SECRET`; see [their Postman instructions](postman/README.md) for
+importing, running, and expected error checks.
 
 ### Images
 
