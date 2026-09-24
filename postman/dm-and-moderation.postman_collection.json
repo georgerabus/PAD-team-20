@@ -1,0 +1,420 @@
+{
+  "info": {
+    "name": "Discord DMs & Moderation",
+    "description": "Basic CRUD smoke test for both services at their current stage (no auth, no cross-service calls yet). Runs top to bottom: a channel is created, a message is posted into it, both are read/updated/deleted, and a moderation decision goes through the same cycle. Ids are carried from one request to the next automatically.\n\nStart Discord DMs Service on port 3000 and Moderation Service on port 3001 (PORT=3001 npm run start).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "dmBaseUrl", "value": "http://localhost:3002" },
+    { "key": "moderationBaseUrl", "value": "http://localhost:3003" }
+  ],
+  "item": [
+    {
+      "name": "Discord DMs Service",
+      "item": [
+        {
+          "name": "Create channel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('channelId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"name\": \"general-mod-chat\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Create message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('messageId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/messages",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channelId\": \"{{channelId}}\",\n  \"authorId\": \"{{$guid}}\",\n  \"content\": \"hello\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List channels",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels"]
+            }
+          }
+        },
+        {
+          "name": "Get channel by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels", "{{channelId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update channel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('name updated', () => pm.expect(pm.response.json().name).to.eql('renamed-channel'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels", "{{channelId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"renamed-channel\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List messages by channel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('contains the created message', () => pm.expect(pm.response.json().some(m => m.id === pm.collectionVariables.get('messageId'))).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{dmBaseUrl}}/messages?channelId={{channelId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["messages"],
+              "query": [{ "key": "channelId", "value": "{{channelId}}" }]
+            }
+          }
+        },
+        {
+          "name": "Update message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/messages/{{messageId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["messages", "{{messageId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"hello, edited\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{dmBaseUrl}}/messages/{{messageId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["messages", "{{messageId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete channel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels", "{{channelId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get deleted channel (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels", "{{channelId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Moderation Service",
+      "item": [
+        {
+          "name": "Create decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('decisionId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{$guid}}\",\n  \"action\": \"accept\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Create decision with invalid action (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{$guid}}\",\n  \"action\": \"maybe\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List decisions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions"]
+            }
+          }
+        },
+        {
+          "name": "Get decision by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions", "{{decisionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('action updated', () => pm.expect(pm.response.json().action).to.eql('ban'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions", "{{decisionId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ban\",\n  \"penalty\": 10\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions", "{{decisionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get deleted decision (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
+              "host": ["{{moderationBaseUrl}}"],
+              "path": ["decisions", "{{decisionId}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
