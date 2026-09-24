@@ -101,13 +101,87 @@ services:
     networks: [session, backend]
     restart: unless-stopped
 
+  # ---- Discord DMs Service ----
+  dm-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: dm
+      POSTGRES_USER: dm
+      POSTGRES_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
+    volumes:
+      - dm-db-data:/var/lib/postgresql/data
+      - ./db/dm:/docker-entrypoint-initdb.d:ro
+    networks: [dm]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dm -d dm"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  dm-service:
+    image: augustinploteanu/pad-dm-service:0.1.0
+    depends_on:
+      dm-db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DB_HOST: dm-db
+      DB_PORT: 5432
+      DB_NAME: dm
+      DB_USER: dm
+      DB_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
+    ports:
+      - "3002:3000"
+    networks: [dm, backend]
+    restart: unless-stopped
+
+  # ---- Moderation Service ----
+  moderation-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: moderation
+      POSTGRES_USER: moderation
+      POSTGRES_PASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
+    volumes:
+      - moderation-db-data:/var/lib/postgresql/data
+      - ./db/moderation:/docker-entrypoint-initdb.d:ro
+    networks: [moderation]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moderation -d moderation"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  moderation-service:
+    image: augustinploteanu/pad-moderation-service:0.1.0
+    depends_on:
+      moderation-db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DB_HOST: moderation-db
+      DB_PORT: 5432
+      DB_NAME: moderation
+      DB_USER: moderation
+      DB_PASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
+    ports:
+      - "3003:3000"
+    networks: [moderation, backend]
+    restart: unless-stopped
+
 # One private network per service for its database, and a shared one the
 # services use to reach each other.
 networks:
   backend:
   player:
   session:
+  dm:
+  moderation:
 
 volumes:
   player-db-data:
   session-db-data:
+  dm-db-data:
+  moderation-db-data:
