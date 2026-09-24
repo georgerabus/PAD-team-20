@@ -8,6 +8,7 @@ A game set in a university Discord server where a moderation team decides who ge
 - [Architecture Diagram](#architecture-diagram)
 - [Technologies and Communication Patterns](#technologies-and-communication-patterns)
 - [Communication Contract](#communication-contract)
+- [Running the System](#running-the-system)
 - [GitHub Workflow](#github-workflow)
 - [Project Board](#project-board)
 
@@ -171,7 +172,21 @@ locally, so no call ever goes back to the issuer to check one.
   reads, decisions, and the two WebSocket handshakes.
 
 Every REST call except `POST /auth/*` carries `Authorization: Bearer <token>`.
-Endpoints marked *internal* are called by another service, never by a client.
+
+**Service-to-service calls.** Endpoints marked *internal* are called by another
+service, never by a client, and no token can show that: every player holds one.
+They carry a shared secret instead, the same value for every service, in a
+header:
+
+```
+X-Service-Secret: <the shared secret>
+```
+
+A service refuses to start without it and answers `401 SERVICE_AUTH_REQUIRED`
+when it is missing or wrong. The secret is configuration, like the signing
+keys: it lives in each service's environment and is never committed. Without
+it, anyone holding a player token could open a session with a roster and levels
+they made up, or report the outcome of a decision nobody made.
 
 **Types.** `UUID` = RFC-4122 string. `timestamp` = ISO-8601 UTC. `date` =
 ISO-8601 date. `enum(...)` = closed string set. All bodies are
@@ -280,13 +295,22 @@ the caller is a member and hands Session the roster with each member's level, so
 Session never has to ask Player who someone is.
 
 ```json
-// PlayerProfile
+// PlayerProfile — displayName and avatar are null until PATCH sets them
 { "playerId":"UUID", "username":"string", "email":"string",
-  "level":"int", "xp":"int", "createdAt":"timestamp" }
+  "level":"int", "xp":"int", "displayName":"string|null",
+  "avatar":"string|null", "createdAt":"timestamp" }
+
+// One entry of a team's members[]
+{ "playerId":"UUID", "username":"string", "level":"int" }
 ```
 
+`PlayerProfile` carries `email`, so a player reads and edits only their own. A
+team's `members[]` therefore names each member, since an id alone could not be
+turned into a username, and carries `level` because that is what Session's
+roster needs.
+
 **Consumes** `SessionCompleted` → award XP, increment `completedShifts`, apply
-`disciplinaryActions`.
+`disciplinaryActions`. Levels follow XP: one level per 100 XP.
 
 ### Server Moderation Session Service
 
@@ -342,6 +366,13 @@ moderator's level so later shifts get harder. On each outcome from Moderation it
 updates score / penalties / `applicationsProcessed` and advances the current
 applicant. On `end` it reads the decision log from Moderation, so the final
 result comes from the authoritative record, not from its running counters.
+
+**How the numbers are reached.** `penalties` is the sum of the `penalty` values
+Moderation reported, and `score` is 10 points per correct decision minus the
+penalties. At the end of a shift the moderator earns the shift's score as XP and
+each junior mod who joined earns half of it, never below zero, and a player's
+`disciplinaryActions` counts their own decisions that carried a penalty. Only
+the moderator decides, so only the moderator can collect them.
 
 **Publishes** `SessionCompleted { sessionId, perPlayer[] }`.
 
@@ -649,6 +680,70 @@ server → client:
 | Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access |
 | Discord DMs | Credential | `GET /credentials/{id}` — share a document into a channel |
 | Discord DMs | University Record | `GET /records/*` — share a record into a channel |
+
+## Running the System
+
+Every service is published on Docker Hub and started together by
+`docker-compose.yml` at the root of this repository. Each service owns its own
+PostgreSQL database, which only that service can reach, and keeps its data in a
+named volume.
+
+### What you need
+
+- **Docker**, with Compose
+- **OpenSSL**, once, to generate the token signing keys
+
+### Setup
+
+```bash
+# 1. Configuration: copy the template and fill in every value. Each one is a
+#    secret, so the .env file is gitignored and never committed.
+cp .env.example .env
+openssl rand -hex 32        # run once per value in .env
+
+# 2. Signing keys for the two token issuers, Player and Session
+mkdir -p keys/player keys/session
+openssl genrsa -out keys/player/private.pem 2048
+openssl rsa -in keys/player/private.pem -pubout -out keys/player/public.pem
+openssl genrsa -out keys/session/private.pem 2048
+openssl rsa -in keys/session/private.pem -pubout -out keys/session/public.pem
+
+# 3. Start everything
+docker compose up -d
+```
+
+Compose refuses to start while any value in `.env` is still empty. Session
+receives Player's **public** key only, which is what lets it validate player
+tokens locally without ever calling Player.
+
+Each database runs its own `db/<service>/schema.sql` the first time its volume
+is empty. To start from an empty database, remove the volumes:
+`docker compose down -v`.
+
+Player answers on `http://localhost:3000` and Session on
+`http://localhost:3001`. The Postman collections under `postman/` exercise the
+endpoints; set each collection's `serviceSecret` variable to the
+`SERVICE_SECRET` from your `.env`.
+
+### Images
+
+| Service | Docker Hub |
+|---|---|
+| Player | [`catalinasiminiuc/pad-player-service`](https://hub.docker.com/r/catalinasiminiuc/pad-player-service) |
+| Server Moderation Session | [`catalinasiminiuc/pad-server-moderation-session-service`](https://hub.docker.com/r/catalinasiminiuc/pad-server-moderation-session-service) |
+| Moderation | [`augustinploteanu/pad-moderation-service`](https://hub.docker.com/r/augustinploteanu/pad-moderation-service) |
+| Discord DMs | [`augustinploteanu/pad-dm-service`](https://hub.docker.com/r/augustinploteanu/pad-dm-service) |
+
+Images are tagged `username/service-name:version`, with the version following
+the same scheme as the repository tags below. `docker-compose.yml` pins an exact
+version for every service, never `latest`, so the stack anyone starts is the
+stack everyone else started. Build for `linux/amd64` **and** `linux/arm64`, so
+the stack runs on Intel and Apple Silicon alike:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t <username>/<service-name>:<version> --push .
+```
 
 ## GitHub Workflow
 
