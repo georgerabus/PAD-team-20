@@ -246,6 +246,90 @@
               "path": ["channels", "{{channelId}}"]
             }
           }
+        },
+        {
+          "name": "Create channel for sharing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('channelId2', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/channels",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["channels"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"name\": \"enrollment-check\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Share a university record into a new channel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('content is null', () => pm.expect(body.content).to.be.null);",
+                  "pm.test('attachment carries the shared source', () => pm.expect(body.attachment.source).to.eql('enrollment'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/messages",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channelId\": \"{{channelId2}}\",\n  \"authorId\": \"{{$guid}}\",\n  \"share\": { \"applicantId\": \"{{$guid}}\", \"source\": \"enrollment\" }\n}"
+            }
+          }
+        },
+        {
+          "name": "Create message with neither content nor share (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{dmBaseUrl}}/messages",
+              "host": ["{{dmBaseUrl}}"],
+              "path": ["messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channelId\": \"{{channelId2}}\",\n  \"authorId\": \"{{$guid}}\"\n}"
+            }
+          }
         }
       ]
     },
@@ -262,7 +346,10 @@
                 "exec": [
                   "pm.test('201 Created', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.collectionVariables.set('decisionId', body.id);"
+                  "pm.collectionVariables.set('decisionId', body.id);",
+                  "pm.test('correct is a boolean', () => pm.expect(body.correct).to.be.a('boolean'));",
+                  "pm.test('outcome is one of the contract values', () => pm.expect(['correct','wrong_admit','wrong_reject','missed_ban']).to.include(body.outcome));",
+                  "pm.test('penalty matches outcome', () => pm.expect(body.penalty).to.eql(body.outcome === 'correct' ? 0 : body.penalty));"
                 ]
               }
             }

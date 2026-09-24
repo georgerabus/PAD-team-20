@@ -37,7 +37,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: catalinasiminiuc/pad-player-service:1.2.0
+    image: catalinasiminiuc/pad-player-service:1.1.1
     depends_on:
       player-db:
         condition: service_healthy
@@ -45,10 +45,6 @@ services:
       PORT: 3000
       JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
-      # POST /teams/{id}/sessions opens a shift by calling Session, which the
-      # contract marks internal, so the call carries the shared secret.
-      SESSION_BASE_URL: http://session:3001
-      SERVICE_SECRET: ${SERVICE_SECRET:?set SERVICE_SECRET in .env}
       DB_HOST: player-db
       DB_PORT: 5432
       DB_NAME: player
@@ -124,7 +120,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: augustinploteanu/pad-dm-service:0.1.0
+    image: augustinploteanu/pad-dm-service:0.2.0
     depends_on:
       dm-db:
         condition: service_healthy
@@ -159,7 +155,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: augustinploteanu/pad-moderation-service:0.1.0
+    image: augustinploteanu/pad-moderation-service:0.2.0
     depends_on:
       moderation-db:
         condition: service_healthy
