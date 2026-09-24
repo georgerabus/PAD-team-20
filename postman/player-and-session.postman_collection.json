@@ -1,13 +1,22 @@
 {
   "info": {
     "name": "Player & Server Moderation Session",
-    "description": "Runs top to bottom as one story: two players register, a team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, and the result is read back. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nBefore running, set the `serviceSecret` variable to the SERVICE_SECRET from Session Service's .env. Start Player Service on port 3000 and Session Service on port 3001.\n\nWS /sessions/{id}/live is not included: a WebSocket is not part of a collection export. Connect to ws://localhost:3001/sessions/<sessionId>/live?token=<sessionToken> to watch the same shift live.",
+    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, the shift ends, and the SessionCompleted event turns the result into XP. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nBefore running, set the `serviceSecret` variable to the SERVICE_SECRET both services share. Start Player on port 3000 and Session on port 3001, or run the stack with `docker compose up`.\n\nTwo things are not here. WS /sessions/{id}/live cannot be part of a collection export: connect to ws://localhost:3001/sessions/<sessionId>/live?token=<sessionToken> to watch the same shift live. POST /internal/events/session-completed on Player is not in the communication contract either: it stands in for the RabbitMQ subscription until the broker is part of the stack.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "playerBaseUrl", "value": "http://localhost:3000" },
-    { "key": "sessionBaseUrl", "value": "http://localhost:3001" },
-    { "key": "serviceSecret", "value": "" }
+    {
+      "key": "playerBaseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "sessionBaseUrl",
+      "value": "http://localhost:3001"
+    },
+    {
+      "key": "serviceSecret",
+      "value": ""
+    }
   ],
   "item": [
     {
@@ -15,13 +24,36 @@
       "item": [
         {
           "name": "Register moderator",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/register",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{moderatorName}}\",\n  \"email\": \"{{moderatorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          },
           "event": [
             {
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// A fresh username and email each run, so re-running never hits 409.",
+                  "// A fresh username each run, so re-running never hits 409.",
                   "pm.collectionVariables.set('moderatorName', 'moderator' + Date.now());"
                 ]
               }
@@ -31,36 +63,48 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('moderatorId', body.playerId);",
                   "pm.collectionVariables.set('moderatorToken', body.token);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{playerBaseUrl}}/auth/register",
-              "host": ["{{playerBaseUrl}}"],
-              "path": ["auth", "register"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"{{moderatorName}}\",\n  \"email\": \"{{moderatorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
-            }
-          }
+          ]
         },
         {
           "name": "Register junior mod",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/register",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{juniorName}}\",\n  \"email\": \"{{juniorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          },
           "event": [
             {
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.collectionVariables.set('juniorName', 'juniormod' + Date.now());"]
+                "exec": [
+                  "pm.collectionVariables.set('juniorName', 'juniormod' + Date.now());"
+                ]
               }
             },
             {
@@ -68,138 +112,500 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('juniorId', body.playerId);",
                   "pm.collectionVariables.set('juniorToken', body.token);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{playerBaseUrl}}/auth/register",
-              "host": ["{{playerBaseUrl}}"],
-              "path": ["auth", "register"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"{{juniorName}}\",\n  \"email\": \"{{juniorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
-            }
-          }
+          ]
         },
         {
           "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/login",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{moderatorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('moderatorToken', body.token);",
                   "pm.collectionVariables.set('refreshToken', body.refreshToken);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{playerBaseUrl}}/auth/login",
-              "host": ["{{playerBaseUrl}}"],
-              "path": ["auth", "login"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{moderatorName}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
-            }
-          }
+          ]
         },
         {
           "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/auth/refresh",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "// The refresh token is single use: this one is now spent.",
                   "pm.collectionVariables.set('moderatorToken', pm.response.json().token);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{playerBaseUrl}}/auth/refresh",
-              "host": ["{{playerBaseUrl}}"],
-              "path": ["auth", "refresh"]
-            },
-            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" }
-          }
+          ]
         },
         {
           "name": "Get own profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "pm.test('is the caller', () => pm.expect(pm.response.json().playerId).to.eql(pm.collectionVariables.get('moderatorId')));"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorToken}}" }],
-            "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
-              "host": ["{{playerBaseUrl}}"],
-              "path": ["players", "{{moderatorId}}"]
-            }
-          }
+          ]
         },
         {
           "name": "Update own profile",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('displayName saved', () => pm.expect(pm.response.json().displayName).to.eql('Ana Rusu'));"
-                ]
-              }
-            }
-          ],
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{moderatorToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
             ],
             "url": {
               "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
-              "host": ["{{playerBaseUrl}}"],
-              "path": ["players", "{{moderatorId}}"]
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"displayName\": \"Ana Rusu\",\n  \"avatar\": \"https://utm.md/avatar.png\"\n}"
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('displayName saved', () => pm.expect(pm.response.json().displayName).to.eql('Ana Rusu'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get progression",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/progression",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}",
+                "progression"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('starts at level 1 with no shifts', () => {",
+                  "  pm.expect(body.level).to.eql(1);",
+                  "  pm.expect(body.completedShifts).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ask to be friends",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/friends",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}",
+                "friends"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"friendId\": \"{{juniorId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.test('waiting on the other player', () => pm.expect(pm.response.json().status).to.eql('pending'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accept the request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{juniorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{juniorId}}/friends",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{juniorId}}",
+                "friends"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"friendId\": \"{{moderatorId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "// Asking back is how a request is accepted: one friendship, two people.",
+                  "pm.test('now mutual', () => pm.expect(pm.response.json().status).to.eql('accepted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List friends",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/friends",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}",
+                "friends"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const friends = pm.response.json();",
+                  "pm.test('one accepted friend', () => {",
+                  "  pm.expect(friends).to.have.lengthOf(1);",
+                  "  pm.expect(friends[0].status).to.eql('accepted');",
+                  "  pm.expect(friends[0].playerId).to.eql(pm.collectionVariables.get('juniorId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create team",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/teams",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "teams"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"FCIM Night Shift\",\n  \"ownerId\": \"{{moderatorId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('teamId', pm.response.json().teamId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add a team member",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/teams/{{teamId}}/members",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "teams",
+                "{{teamId}}",
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playerId\": \"{{juniorId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read the team",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/teams/{{teamId}}",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "teams",
+                "{{teamId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const team = pm.response.json();",
+                  "pm.test('owner and member, with levels', () => {",
+                  "  pm.expect(team.ownerId).to.eql(pm.collectionVariables.get('moderatorId'));",
+                  "  pm.expect(team.members).to.have.lengthOf(2);",
+                  "  pm.expect(team.members[0]).to.have.property('level');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Open a shift for the team",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/teams/{{teamId}}/sessions",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "teams",
+                "{{teamId}}",
+                "sessions"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "// Player calls Session for real here, handing over the roster.",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('sessionId', body.sessionId);",
+                  "pm.collectionVariables.set('moderatorSessionToken', body.sessionToken);",
+                  "const claims = JSON.parse(Buffer.from(body.sessionToken.split('.')[1], 'base64').toString());",
+                  "pm.test('session token names the caller as moderator', () => {",
+                  "  pm.expect(claims.role).to.eql('moderator');",
+                  "  pm.expect(claims.sub).to.eql(pm.collectionVariables.get('moderatorId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -207,129 +613,194 @@
       "name": "Server Moderation Session Service",
       "item": [
         {
-          "name": "Open session (internal, from Player)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "const body = pm.response.json();",
-                  "pm.test('starts in the lobby', () => pm.expect(body.status).to.eql('lobby'));",
-                  "pm.collectionVariables.set('sessionId', body.sessionId);",
-                  "// The moderator's session token, which Player hands back to its client.",
-                  "pm.collectionVariables.set('moderatorSessionToken', body.sessionToken);"
-                ]
-              }
-            }
-          ],
+          "name": "Open a session directly (internal, from Player)",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Service-Secret", "value": "{{serviceSecret}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Secret",
+                "value": "{{serviceSecret}}"
+              }
             ],
             "url": {
               "raw": "{{sessionBaseUrl}}/sessions",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions"]
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions"
+              ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"teamId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"members\": [\n    { \"playerId\": \"{{moderatorId}}\", \"level\": 3 },\n    { \"playerId\": \"{{juniorId}}\", \"level\": 1 }\n  ]\n}"
+              "raw": "{\n  \"teamId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"members\": [\n    {\n      \"playerId\": \"{{moderatorId}}\",\n      \"level\": 3\n    }\n  ]\n}"
             }
-          }
-        },
-        {
-          "name": "Junior mod joins",
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "// The endpoint Player itself calls, exercised on its own.",
+                  "pm.test('starts in the lobby', () => pm.expect(pm.response.json().status).to.eql('lobby'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Junior mod joins",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{juniorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/join",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "join"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
                   "pm.test('joins as junior mod', () => pm.expect(body.role).to.eql('junior_mod'));",
                   "pm.collectionVariables.set('juniorSessionToken', body.sessionToken);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{juniorToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/join",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "join"]
-            }
-          }
+          ]
         },
         {
           "name": "Assign roles",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
-              }
-            }
-          ],
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
             ],
             "url": {
               "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/roles",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "roles"]
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "roles"
+              ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"assignments\": [\n    {\n      \"playerId\": \"{{juniorId}}\",\n      \"role\": \"junior_mod\",\n      \"recordAccess\": [\"enrollment\", \"emails\"],\n      \"channelAccess\": [\"enrollment-check\", \"general-mod-chat\"]\n    }\n  ]\n}"
+              "raw": "{\n  \"assignments\": [\n    {\n      \"playerId\": \"{{juniorId}}\",\n      \"role\": \"junior_mod\",\n      \"recordAccess\": [\n        \"enrollment\",\n        \"emails\"\n      ],\n      \"channelAccess\": [\n        \"enrollment-check\",\n        \"general-mod-chat\"\n      ]\n    }\n  ]\n}"
             }
-          }
-        },
-        {
-          "name": "Start shift",
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('now active', () => pm.expect(body.status).to.eql('active'));",
-                  "pm.test('carries a rule set version', () => pm.expect(body.ruleSetVersion).to.be.a('number'));"
+                  "pm.test('200', () => pm.response.to.have.status(200));"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/start",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "start"]
-            }
-          }
+          ]
         },
         {
-          "name": "Re-issue session token",
+          "name": "Start shift",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/start",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "start"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('now active with a rule set', () => {",
+                  "  pm.expect(body.status).to.eql('active');",
+                  "  pm.expect(body.ruleSetVersion).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Re-issue session token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{juniorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/token",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "token"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "const token = pm.response.json().sessionToken;",
                   "pm.collectionVariables.set('juniorSessionToken', token);",
                   "// What a client does after shift_started: pick up its recordAccess.",
@@ -338,196 +809,526 @@
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{juniorToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/token",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "token"]
-            }
-          }
+          ]
         },
         {
           "name": "Next applicant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/next-applicant",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "next-applicant"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('202', () => pm.response.to.have.status(202));",
                   "pm.collectionVariables.set('applicantId', pm.response.json().applicantId);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/next-applicant",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "next-applicant"]
-            }
-          }
+          ]
         },
         {
           "name": "Current applicant",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{juniorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/current-applicant",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "current-applicant"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "pm.test('is the one just called', () => pm.expect(pm.response.json().applicantId).to.eql(pm.collectionVariables.get('applicantId')));"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{juniorSessionToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/current-applicant",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "current-applicant"]
-            }
-          }
+          ]
         },
         {
           "name": "Report outcome (internal, from Moderation)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
-              }
-            }
-          ],
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Service-Secret", "value": "{{serviceSecret}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Secret",
+                "value": "{{serviceSecret}}"
+              }
             ],
             "url": {
               "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/outcomes",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "outcomes"]
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "outcomes"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"decisionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{applicantId}}\",\n  \"correct\": true,\n  \"penalty\": 0\n}"
             }
-          }
-        },
-        {
-          "name": "Session state",
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test('one application processed', () => pm.expect(body.applicationsProcessed).to.eql(1));",
-                  "pm.test('score moved', () => pm.expect(body.score).to.eql(10));"
+                  "pm.test('200', () => pm.response.to.have.status(200));"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}"]
-            }
-          }
+          ]
         },
         {
-          "name": "Channel access-check (internal, from Discord DMs)",
+          "name": "Session state",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('one application processed, score moved', () => {",
+                  "  pm.expect(body.applicationsProcessed).to.eql(1);",
+                  "  pm.expect(body.score).to.eql(10);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Channel access-check (internal, from Discord DMs)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Service-Secret",
+                "value": "{{serviceSecret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "access-check"
+              ],
+              "query": [
+                {
+                  "key": "playerId",
+                  "value": "{{juniorId}}"
+                },
+                {
+                  "key": "channel",
+                  "value": "enrollment-check"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "pm.test('assigned channel is allowed', () => pm.expect(pm.response.json().allowed).to.be.true);"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "X-Service-Secret", "value": "{{serviceSecret}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "access-check"],
-              "query": [
-                { "key": "playerId", "value": "{{juniorId}}" },
-                { "key": "channel", "value": "enrollment-check" }
-              ]
-            }
-          }
+          ]
         },
         {
           "name": "End shift",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/end",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "end"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test('one correct decision', () => pm.expect(body.correctDecisions).to.eql(1));",
-                  "pm.test('both players in the result', () => pm.expect(body.perPlayer).to.have.lengthOf(2));"
+                  "pm.test('one correct decision, both players in the result', () => {",
+                  "  pm.expect(body.correctDecisions).to.eql(1);",
+                  "  pm.expect(body.perPlayer).to.have.lengthOf(2);",
+                  "});",
+                  "// Kept so the SessionCompleted event can be rebuilt below.",
+                  "pm.collectionVariables.set('perPlayer', JSON.stringify(body.perPlayer));"
                 ]
               }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{moderatorSessionToken}}" }],
-            "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/end",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "end"]
-            }
-          }
+          ]
         },
         {
           "name": "Session results",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{juniorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/results",
+              "host": [
+                "{{sessionBaseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "results"
+              ]
+            }
+          },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('200', () => pm.response.to.have.status(200));",
                   "pm.test('same result as end returned', () => pm.expect(pm.response.json().sessionId).to.eql(pm.collectionVariables.get('sessionId')));"
                 ]
               }
             }
-          ],
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "Deliver SessionCompleted to Player",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Secret",
+                "value": "{{serviceSecret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/internal/events/session-completed",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "session-completed"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{eventId}}\",\n  \"type\": \"SessionCompleted\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"payload\": { \"sessionId\": \"{{sessionId}}\", \"perPlayer\": {{perPlayer}} }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Kept in a variable so the redelivery below can reuse the same id.",
+                  "pm.collectionVariables.set('eventId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Progression after the shift",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{juniorSessionToken}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/results",
-              "host": ["{{sessionBaseUrl}}"],
-              "path": ["sessions", "{{sessionId}}", "results"]
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/progression",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}",
+                "progression"
+              ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('the shift was counted and xp awarded', () => {",
+                  "  pm.expect(body.completedShifts).to.eql(1);",
+                  "  pm.expect(body.xp).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Redelivery changes nothing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Secret",
+                "value": "{{serviceSecret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/internal/events/session-completed",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "session-completed"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{eventId}}\",\n  \"type\": \"SessionCompleted\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"payload\": { \"sessionId\": \"{{sessionId}}\", \"perPlayer\": {{perPlayer}} }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Progression is unchanged",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/progression",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}",
+                "progression"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('still one shift, not two', () => pm.expect(pm.response.json().completedShifts).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cleanup",
+      "item": [
+        {
+          "name": "Remove the team member",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/teams/{{teamId}}/members/{{juniorId}}",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "teams",
+                "{{teamId}}",
+                "members",
+                "{{juniorId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove the friend",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/friends/{{juniorId}}",
+              "host": [
+                "{{playerBaseUrl}}"
+              ],
+              "path": [
+                "players",
+                "{{moderatorId}}",
+                "friends",
+                "{{juniorId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }
