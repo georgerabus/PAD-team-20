@@ -171,9 +171,94 @@ services:
     networks: [moderation, backend]
     restart: unless-stopped
 
+  server-rules-db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: server_rules
+      POSTGRES_USER: server_rules
+      POSTGRES_PASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
+    volumes:
+      - server-rules-db-data:/var/lib/postgresql/data
+      - ./db/server-rules:/docker-entrypoint-initdb.d:ro
+    networks: [server-rules]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U server_rules -d server_rules"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  server-rules:
+    image: loredanaaaa/server-rules-service:1.0.0
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "false"
+      APP_KEY: ${SERVER_RULES_APP_KEY:?Set SERVER_RULES_APP_KEY in .env}
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: pgsql
+      DB_HOST: server-rules-db
+      DB_PORT: 5432
+      DB_DATABASE: server_rules
+      DB_USERNAME: server_rules
+      DB_PASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
+      SESSION_DRIVER: array
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+      MOCK_AUTH_ENABLED: "true"
+      # Public lab fixtures matching the Postman collection; not real credentials.
+      MOCK_SESSION_SERVICE_TOKEN: lab-session-service
+      MOCK_MODERATION_SERVICE_TOKEN: lab-moderation-service
+      MOCK_PLAYER_TOKEN: lab-player
+      MOCK_SESSION_ID: 11111111-1111-4111-8111-111111111111
+    ports:
+      - "127.0.0.1:${SERVER_RULES_PORT:-8001}:80"
+    depends_on:
+      server-rules-db:
+        condition: service_healthy
+    networks: [server-rules, backend]
+  university-record-db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: university_record
+      POSTGRES_USER: university_record
+      POSTGRES_PASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
+    volumes:
+      - university-record-db-data:/var/lib/postgresql/data
+      - ./db/university-record:/docker-entrypoint-initdb.d:ro
+    networks: [university-record]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U university_record -d university_record"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  university-record:
+    image: loredanaaaa/university-record-service:1.0.0
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "false"
+      APP_KEY: ${UNIVERSITY_RECORD_APP_KEY:?Set UNIVERSITY_RECORD_APP_KEY in .env}
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: pgsql
+      DB_HOST: university-record-db
+      DB_PORT: 5432
+      DB_DATABASE: university_record
+      DB_USERNAME: university_record
+      DB_PASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
+      SESSION_DRIVER: array
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+      MOCK_AUTH_ENABLED: "true"
+      MOCK_BOOTSTRAP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${UNIVERSITY_RECORD_PORT:-8002}:80"
+    depends_on:
+      university-record-db:
+        condition: service_healthy
+    networks: [university-record, backend]
+
 # One private network per service for its database, and a shared one the
 # services use to reach each other.
 networks:
+  server-rules:
+  university-record:
   backend:
   player:
   session:
@@ -181,6 +266,8 @@ networks:
   moderation:
 
 volumes:
+  server-rules-db-data:
+  university-record-db-data:
   player-db-data:
   session-db-data:
   dm-db-data:
