@@ -200,7 +200,8 @@ ISO-8601 date. `enum(...)` = closed string set. All bodies are
 
 Common statuses: `400` bad payload, `401` no/invalid token, `403` record,
 document or channel access denied, `404` missing, `409` conflict/idempotency,
-`422` validation.
+`422` validation. A `422` carries `"error":"VALIDATION_FAILED"`, with the
+field errors in `details`.
 
 **Event envelope.** Async events travel through RabbitMQ as:
 
@@ -385,10 +386,10 @@ the whole shift while a token only lives 15 minutes.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
+| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
 | `GET /applicants/{id}` `[REST]` | *(internal, Moderation — includes impostor flag)* | `200 Applicant` |
-| `GET /applicants/{id}/public` `[REST]` | — | `200 ApplicantPublic` *(what the moderator sees)* |
-| `GET /applicants?sessionId=` `[REST]` | — | `200 [ApplicantPublic]` |
+| `GET /applicants/{id}/public` `[REST]` | — *(session token of the applicant's session, any role)* | `200 ApplicantPublic` *(what the moderator sees)* \| `401` \| `403` \| `404` |
+| `GET /applicants?sessionId=` `[REST]` | — *(session token of that session)* | `200 [ApplicantPublic]` \| `401` \| `403` |
 
 ```json
 // ApplicantPublic — presented info only, may be false by design
@@ -428,9 +429,9 @@ Credential checks it locally, without calling Session or Player:
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
+| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
 | `GET /applicants/{id}/credentials` `[REST]` | — *(session token, moderator)* | `200 [Credential]` \| `401` \| `403` \| `404` |
-| `GET /credentials/{id}` `[REST]` | — *(session token, moderator)* | `200 Credential` \| `401` \| `403` \| `404` |
+| `GET /credentials/{id}` `[REST]` | — *(session token, moderator)* | `200 Credential` \| `401` \| `403` \| `404 CREDENTIAL_NOT_FOUND` |
 | `POST /applicants/{id}/credentials/validate` `[REST]` | — *(internal, Moderation)* | `200 CredentialValidation` \| `404` |
 
 Right after an applicant is created, a read may return `404 APPLICANT_NOT_FOUND`
@@ -707,6 +708,8 @@ openssl genrsa -out keys/player/private.pem 2048
 openssl rsa -in keys/player/private.pem -pubout -out keys/player/public.pem
 openssl genrsa -out keys/session/private.pem 2048
 openssl rsa -in keys/session/private.pem -pubout -out keys/session/public.pem
+# The containers run as another user than you, so they must be able to read the keys
+chmod 644 keys/*/private.pem
 
 # 3. Start everything
 docker compose up -d
@@ -733,6 +736,21 @@ Those two services still authenticate against fixtures rather than validating
 real session tokens, and consume a mocked `ApplicantInitialized` rather than a
 published event, so wiring them to the rest is integration work still to come.
 
+Applicant answers on `http://127.0.0.1:8003` and Credential on
+`http://127.0.0.1:8004`. Both are Laravel services on `php:8.4-apache`; Laravel
+migrations create their tables when the container starts, and neither needs an
+`APP_KEY`, since they are JSON APIs with no cookies or sessions. Besides
+`SERVICE_SECRET`, Applicant needs `APPLICANT_DB_PASSWORD`, and Credential needs
+`CREDENTIAL_DB_PASSWORD` and `CREDENTIAL_ISSUER_SECRET`, the key it signs
+documents with. Both validate real session tokens locally against
+`keys/session/public.pem`. Import
+`postman/applicant-and-credential.postman_collection.json`, set `serviceSecret`
+to the `SERVICE_SECRET` from your `.env` and run it in order with Player and
+Session up: it opens a real session, then exercises every Applicant and
+Credential endpoint and error. Until a broker is added, `ApplicantInitialized`
+is written to each service's log in the event envelope, and
+`php artisan events:handle` consumes one from a file or stdin.
+
 ### Images
 
 | Service | Docker Hub |
@@ -743,6 +761,8 @@ published event, so wiring them to the rest is integration work still to come.
 | Discord DMs | [`augustinploteanu/pad-dm-service`](https://hub.docker.com/r/augustinploteanu/pad-dm-service) |
 | Server Rules | [`loredanaaaa/server-rules-service`](https://hub.docker.com/r/loredanaaaa/server-rules-service) |
 | University Record | [`loredanaaaa/university-record-service`](https://hub.docker.com/r/loredanaaaa/university-record-service) |
+| Applicant | [`georgerabus/pad-applicant-service`](https://hub.docker.com/r/georgerabus/pad-applicant-service) |
+| Credential | [`georgerabus/pad-credential-service`](https://hub.docker.com/r/georgerabus/pad-credential-service) |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact
