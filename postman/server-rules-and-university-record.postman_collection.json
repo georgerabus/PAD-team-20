@@ -1,0 +1,4004 @@
+{
+  "info": {
+    "_postman_id": "dfdbf512-6073-4ae0-b878-c71df8fd2ace",
+    "name": "Server Rules & University Record - Local lab",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run the full collection in order with both services running on ports 8001 and 8002. Uses public lab mock tokens. Expected validation and access errors are tested as successful assertions. Each run creates three rule versions; applicant initialization is idempotent. No separate environment is needed."
+  },
+  "variable": [
+    {
+      "key": "rulesBaseUrl",
+      "value": "http://127.0.0.1:8001",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "11111111-1111-4111-8111-111111111111",
+      "type": "string"
+    },
+    {
+      "key": "otherSessionId",
+      "value": "22222222-2222-4222-8222-222222222222",
+      "type": "string"
+    },
+    {
+      "key": "rulesSessionToken",
+      "value": "lab-session-service",
+      "type": "string"
+    },
+    {
+      "key": "rulesModerationToken",
+      "value": "lab-moderation-service",
+      "type": "string"
+    },
+    {
+      "key": "rulesPlayerToken",
+      "value": "lab-player",
+      "type": "string"
+    },
+    {
+      "key": "recordsBaseUrl",
+      "value": "http://127.0.0.1:8002",
+      "type": "string"
+    },
+    {
+      "key": "recordsSessionToken",
+      "value": "lab-session-service",
+      "type": "string"
+    },
+    {
+      "key": "recordsAllToken",
+      "value": "lab-records-all",
+      "type": "string"
+    },
+    {
+      "key": "recordsEnrollmentToken",
+      "value": "lab-records-enrollment",
+      "type": "string"
+    },
+    {
+      "key": "recordsEmailsToken",
+      "value": "lab-records-emails",
+      "type": "string"
+    },
+    {
+      "key": "recordsCoursesToken",
+      "value": "lab-records-courses",
+      "type": "string"
+    },
+    {
+      "key": "recordsScheduleToken",
+      "value": "lab-records-schedule",
+      "type": "string"
+    },
+    {
+      "key": "recordsFcimToken",
+      "value": "lab-records-fcim",
+      "type": "string"
+    },
+    {
+      "key": "recordsNoneToken",
+      "value": "lab-records-none",
+      "type": "string"
+    },
+    {
+      "key": "recordsOtherSessionToken",
+      "value": "lab-records-other-session",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Server Rules Service",
+      "description": "Run the entire collection in order against the local lab implementation. Creates three rule versions per run; no cleanup endpoint exists. Captures generated versions automatically; never assumes version 1. Uses public mock tokens, not real JWTs. Tests config/rules.php provisional policy. Requires the Server Rules endpoint feature branch. Change rulesBaseUrl if the service port changes. Do not define environment variables matching generated collection IDs. Negative tests are expected to pass on the specified error status. No Docker/PostgreSQL or shared-stack integration is claimed.",
+      "item": [
+        {
+          "name": "1. Create and retrieve rule sets",
+          "item": [
+            {
+              "name": "01 Create base rules (level 0)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"level\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 201. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "['rulesVersion','rulesVersionSnapshot','baseVersion','baseVersionSnapshot','otherVersion','otherVersionSnapshot'].forEach(k => pm.collectionVariables.unset(k));",
+                      "pm.collectionVariables.set('missingRulesSession', pm.variables.replaceIn('{{$guid}}'));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact RuleSet and Rule shapes', function () {",
+                      " pm.expect(data).to.have.all.keys('ruleSetVersion','sessionId','rules');",
+                      " pm.expect(data.ruleSetVersion).to.be.a('number').and.above(0);",
+                      " pm.expect(Number.isInteger(data.ruleSetVersion)).to.eql(true);",
+                      " pm.expect(data.sessionId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      " pm.expect(data.rules).to.be.an('array').with.lengthOf(2);",
+                      " data.rules.forEach(function (rule) {",
+                      "  pm.expect(rule).to.have.all.keys('id','predicate','params','effect');",
+                      "  pm.expect(rule.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      "  pm.expect(rule.params).to.be.an('object');",
+                      "  pm.expect(rule.predicate).to.be.oneOf(['is_genuine','documents_valid','is_faf','min_years_enrolled','is_enrolled','not_previously_banned','role_allows_channel']);",
+                      "  pm.expect(rule.effect).to.be.oneOf(['allow','restrict_channels','flag','deny','ban']);",
+                      " });",
+                      " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
+                      "});",
+                      "if (pm.response.code === 201) { pm.collectionVariables.set('baseVersion', data.ruleSetVersion); pm.collectionVariables.set('baseVersionSnapshot', JSON.stringify(data)); }",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "02 Create current rules (level 5)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"level\": 5\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 201. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact RuleSet and Rule shapes', function () {",
+                      " pm.expect(data).to.have.all.keys('ruleSetVersion','sessionId','rules');",
+                      " pm.expect(data.ruleSetVersion).to.be.a('number').and.above(0);",
+                      " pm.expect(Number.isInteger(data.ruleSetVersion)).to.eql(true);",
+                      " pm.expect(data.sessionId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      " pm.expect(data.rules).to.be.an('array').with.lengthOf(7);",
+                      " data.rules.forEach(function (rule) {",
+                      "  pm.expect(rule).to.have.all.keys('id','predicate','params','effect');",
+                      "  pm.expect(rule.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      "  pm.expect(rule.params).to.be.an('object');",
+                      "  pm.expect(rule.predicate).to.be.oneOf(['is_genuine','documents_valid','is_faf','min_years_enrolled','is_enrolled','not_previously_banned','role_allows_channel']);",
+                      "  pm.expect(rule.effect).to.be.oneOf(['allow','restrict_channels','flag','deny','ban']);",
+                      " });",
+                      " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
+                      "});",
+                      "if (pm.response.code === 201) { pm.collectionVariables.set('rulesVersion', data.ruleSetVersion); pm.collectionVariables.set('rulesVersionSnapshot', JSON.stringify(data)); }",
+                      "pm.test('Newer version allocated', () => pm.expect(data.ruleSetVersion).to.be.above(Number(pm.collectionVariables.get('baseVersion'))));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "03 Get current session rules",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/current?sessionId={{sessionId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact RuleSet and Rule shapes', function () {",
+                      " pm.expect(data).to.have.all.keys('ruleSetVersion','sessionId','rules');",
+                      " pm.expect(data.ruleSetVersion).to.be.a('number').and.above(0);",
+                      " pm.expect(Number.isInteger(data.ruleSetVersion)).to.eql(true);",
+                      " pm.expect(data.sessionId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      " pm.expect(data.rules).to.be.an('array').with.lengthOf(7);",
+                      " data.rules.forEach(function (rule) {",
+                      "  pm.expect(rule).to.have.all.keys('id','predicate','params','effect');",
+                      "  pm.expect(rule.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      "  pm.expect(rule.params).to.be.an('object');",
+                      "  pm.expect(rule.predicate).to.be.oneOf(['is_genuine','documents_valid','is_faf','min_years_enrolled','is_enrolled','not_previously_banned','role_allows_channel']);",
+                      "  pm.expect(rule.effect).to.be.oneOf(['allow','restrict_channels','flag','deny','ban']);",
+                      " });",
+                      " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
+                      "});",
+                      "pm.test('Current is the new snapshot', () => pm.expect(data).to.deep.eql(JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot'))));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "04 Get current rules by version",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/{{rulesVersion}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact saved version', () => pm.expect(data).to.deep.eql(JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot'))));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "05 Get immutable historical version",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/{{baseVersion}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact RuleSet and Rule shapes', function () {",
+                      " pm.expect(data).to.have.all.keys('ruleSetVersion','sessionId','rules');",
+                      " pm.expect(data.ruleSetVersion).to.be.a('number').and.above(0);",
+                      " pm.expect(Number.isInteger(data.ruleSetVersion)).to.eql(true);",
+                      " pm.expect(data.sessionId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      " pm.expect(data.rules).to.be.an('array').with.lengthOf(2);",
+                      " data.rules.forEach(function (rule) {",
+                      "  pm.expect(rule).to.have.all.keys('id','predicate','params','effect');",
+                      "  pm.expect(rule.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      "  pm.expect(rule.params).to.be.an('object');",
+                      "  pm.expect(rule.predicate).to.be.oneOf(['is_genuine','documents_valid','is_faf','min_years_enrolled','is_enrolled','not_previously_banned','role_allows_channel']);",
+                      "  pm.expect(rule.effect).to.be.oneOf(['allow','restrict_channels','flag','deny','ban']);",
+                      " });",
+                      " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
+                      "});",
+                      "pm.test('Historical snapshot unchanged', () => pm.expect(data).to.deep.eql(JSON.parse(pm.collectionVariables.get('baseVersionSnapshot'))));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "2. Evaluate applicants",
+          "item": [
+            {
+              "name": "Accept student with restricted channels",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('accept');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([\"#general\", \"#groapa\"]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Accept staff with teacher channel",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"staff\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('accept');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([\"#general\", \"#groapa\", \"#teachers\"]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Flag invalid documents",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": false\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('flag');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"documents_valid\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject wrong major",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"OTHER\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('reject');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"is_faf\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject first year",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 1,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('reject');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"min_years_enrolled\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject non-enrolled applicant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"graduated\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('reject');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"is_enrolled\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Ban non-genuine applicant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": false,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('ban');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"is_genuine\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Ban previously banned applicant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": true,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('ban');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"not_previously_banned\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Ban takes precedence over reject and flag",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"OTHER\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": true,\n    \"documentsValid\": false\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('ban');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"documents_valid\", \"not_previously_banned\", \"is_faf\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject takes precedence over flag",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"OTHER\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": false\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Expected verdict and channels', function () {",
+                      " pm.expect(data).to.have.all.keys('verdict','allowedChannels','violations');",
+                      " pm.expect(data.verdict).to.eql('reject');",
+                      " pm.expect(data.allowedChannels).to.deep.eql([]);",
+                      "});",
+                      "pm.test('Exact violated rule IDs and predicates', function () {",
+                      " const rules = JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot')).rules;",
+                      " const predicates = [\"documents_valid\", \"is_faf\", \"role_allows_channel\"];",
+                      " const expected = rules.filter(r => predicates.includes(r.predicate)).map(r => ({ruleId:r.id,predicate:r.predicate}));",
+                      " pm.expect(data.violations).to.deep.eql(expected);",
+                      "});",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "3. Validation and caller errors",
+          "item": [
+            {
+              "name": "Create requires authentication",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"level\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Current requires authentication",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/current?sessionId={{sessionId}}",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Version rejects invalid token",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/{{rulesVersion}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "not-a-valid-token",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Evaluate requires authentication",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Player cannot create rules",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"level\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Session cannot call Moderation endpoint",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject malformed session UUID",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"bad\",\n  \"level\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject negative level",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"level\": -1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject string level",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"level\": \"5\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Current requires sessionId",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/current",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Unknown session has no rules",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/current?sessionId={{missingRulesSession}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 404. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Unknown version returns 404",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/2147483647",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 404. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Evaluate unknown version",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": 2147483647,\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 404. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject obsolete groundTruth request",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"groundTruth\": {}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Malformed JSON returns 400",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"sessionId\":",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 400', function () { pm.response.to.have.status(400); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('BAD_REQUEST'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Wrong content type returns 415",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "text"
+                    }
+                  }
+                },
+                "description": "Expected 415. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 415', function () { pm.response.to.have.status(415); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNSUPPORTED_MEDIA_TYPE'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject string boolean",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": \"true\",\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject unknown claim role",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"professor\",\n      \"major\": \"FAF\",\n      \"year\": 2,\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject string year",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/evaluate",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesModerationToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ruleSetVersion\": {{rulesVersion}},\n  \"subject\": {\n    \"claim\": {\n      \"role\": \"student\",\n      \"major\": \"FAF\",\n      \"year\": \"2\",\n      \"universityStatus\": \"enrolled\"\n    },\n    \"genuine\": true,\n    \"previouslyBanned\": false,\n    \"documentsValid\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "4. Session isolation",
+          "item": [
+            {
+              "name": "Create another session rule set",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{otherSessionId}}\",\n  \"level\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 201. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact RuleSet and Rule shapes', function () {",
+                      " pm.expect(data).to.have.all.keys('ruleSetVersion','sessionId','rules');",
+                      " pm.expect(data.ruleSetVersion).to.be.a('number').and.above(0);",
+                      " pm.expect(Number.isInteger(data.ruleSetVersion)).to.eql(true);",
+                      " pm.expect(data.sessionId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      " pm.expect(data.rules).to.be.an('array').with.lengthOf(2);",
+                      " data.rules.forEach(function (rule) {",
+                      "  pm.expect(rule).to.have.all.keys('id','predicate','params','effect');",
+                      "  pm.expect(rule.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);",
+                      "  pm.expect(rule.params).to.be.an('object');",
+                      "  pm.expect(rule.predicate).to.be.oneOf(['is_genuine','documents_valid','is_faf','min_years_enrolled','is_enrolled','not_previously_banned','role_allows_channel']);",
+                      "  pm.expect(rule.effect).to.be.oneOf(['allow','restrict_channels','flag','deny','ban']);",
+                      " });",
+                      " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
+                      "});",
+                      "if (pm.response.code === 201) { pm.collectionVariables.set('otherVersion', data.ruleSetVersion); pm.collectionVariables.set('otherVersionSnapshot', JSON.stringify(data)); }",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Player cannot read other session current",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/current?sessionId={{otherSessionId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Player cannot read other session version",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{rulesBaseUrl}}/rules/{{otherVersion}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{rulesPlayerToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "University Record Service",
+      "description": "Run the entire collection in order against the local lab implementation. POST /applicants consumes the repeatable mocked ApplicantInitialized story; it is not a real story-generator call. Captures applicantId automatically. Replays do not replace stored ground truth. Uses public mock session tokens and the fixed reference data documented in the service README. No Session call, real JWT validation, RabbitMQ or shared-stack integration is assumed. Change recordsBaseUrl if necessary. Do not create environment variables shadowing generated collection IDs. Academic-year needs authentication but never an assignment. Error requests count as passing tests when their expected status/envelope matches.",
+      "item": [
+        {
+          "name": "1. Materialize sample applicant",
+          "item": [
+            {
+              "name": "01 Consume sample ApplicantInitialized event",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 201. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.unset('applicantId'); pm.collectionVariables.set('missingApplicantId',pm.variables.replaceIn('{{$guid}}'));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Applicant ID only', function () { pm.expect(data).to.have.all.keys('applicantId'); pm.expect(data.applicantId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i); });",
+                      "if (pm.response.code === 201) pm.collectionVariables.set('applicantId',data.applicantId);",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "02 Replaying the mock event keeps the same applicant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 201. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Replay returns same applicant', () => pm.expect(data).to.deep.eql({applicantId:pm.collectionVariables.get('applicantId')}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "2. Read assigned records",
+          "item": [
+            {
+              "name": "Read enrollment",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsEnrollmentToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"enrolled\": true, \"studentId\": \"FAF123456\", \"major\": \"FAF\", \"year\": 2, \"status\": \"enrolled\"}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Read emails",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/emails?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsEmailsToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"email\": \"sample.student@utm.md\", \"inGroupList\": true}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Read courses",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/courses",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsCoursesToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"courses\": [\"PAD\", \"Databases\", \"Computer Networks\"]}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Read academic-year",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/academic-year",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"year\": 2026, \"semester\": \"autumn\"}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Read schedule",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/schedule?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsScheduleToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"entries\": [{\"course\": \"PAD\", \"day\": \"Monday\", \"time\": \"09:00\"}, {\"course\": \"Databases\", \"day\": \"Tuesday\", \"time\": \"11:00\"}]}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Read fcim-messages",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/fcim-messages?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsFcimToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"messages\": [{\"author\": \"FCIM Registry (lab fixture)\", \"text\": \"No previous server ban recorded.\", \"ts\": \"2026-09-24T09:00:00Z\"}]}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "3. Assignment and session isolation",
+          "item": [
+            {
+              "name": "Deny unassigned enrollment",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny other-session enrollment",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsOtherSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny unassigned emails",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/emails?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny other-session emails",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/emails?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsOtherSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny unassigned schedule",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/schedule?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny other-session schedule",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/schedule?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsOtherSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny unassigned fcim-messages",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/fcim-messages?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Deny other-session fcim-messages",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/fcim-messages?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsOtherSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Enrollment assignment cannot read emails",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/emails?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsEnrollmentToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Courses still requires assignment",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/courses",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Academic year stays open to authenticated callers",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/academic-year",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 200. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('No assignment required', () => pm.expect(data).to.deep.eql({year:2026,semester:'autumn'}));",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject query-string assignment spoofing",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{applicantId}}&recordAccess[]=enrollment&playerId=admin",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject query-string session spoofing",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{applicantId}}&sessionId={{sessionId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsOtherSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Caller cannot bootstrap another session",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsAllToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{otherSessionId}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "4. Validation and authentication errors",
+          "item": [
+            {
+              "name": "Authentication required for enrollment",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Authentication required for emails",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/emails?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Authentication required for courses",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/courses",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Authentication required for academic-year",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/academic-year",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Authentication required for schedule",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/schedule?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Authentication required for fcim-messages",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/fcim-messages?applicantId={{applicantId}}",
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Authentication required for bootstrap",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Invalid token rejected",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/academic-year",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "invalid-token",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 401. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNAUTHENTICATED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Missing applicantId",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsEnrollmentToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Malformed applicant UUID",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId=bad",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsEnrollmentToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Missing applicant returns 404",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{missingApplicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsEnrollmentToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 404. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Unassigned caller cannot probe missing applicants",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/enrollment?applicantId={{missingApplicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsNoneToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 403. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 403', function () { pm.response.to.have.status(403); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject malformed sessionId",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"bad\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject missing sessionId",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject client-supplied hidden ground truth",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"groundTruth\": {\n    \"exists\": true\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 422. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 422', function () { pm.response.to.have.status(422); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject malformed JSON",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"sessionId\":",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 400', function () { pm.response.to.have.status(400); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('BAD_REQUEST'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject non-object JSON",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "[]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 400', function () { pm.response.to.have.status(400); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('BAD_REQUEST'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Reject non-JSON content type",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/applicants",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsSessionToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "text"
+                    }
+                  }
+                },
+                "description": "Expected 415. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 415', function () { pm.response.to.have.status(415); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('UNSUPPORTED_MEDIA_TYPE'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "Obsolete ground-truth route is absent",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{recordsBaseUrl}}/records/ground-truth/{{applicantId}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{recordsAllToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Expected 404. This intentional error is a passing test when the documented status and envelope match. Uses public local-lab token fixtures only."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "(function () {",
+                      "pm.test('HTTP 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
+                      "const data = pm.response.json();",
+                      "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
+                      "",
+                      "})();"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

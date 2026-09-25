@@ -725,9 +725,9 @@ Player answers on `http://localhost:3000` and Session on
 endpoints. For the Player/Session collection, set `serviceSecret` to the
 `SERVICE_SECRET` from your `.env`.
 
-The Server Rules and University Record collections target the local Laravel
-lab mocks on ports 8001 and 8002. They use public fixture tokens instead of
-`SERVICE_SECRET`. Import both collection JSON files into Postman and run each
+The combined Server Rules and University Record collection targets the local Laravel
+lab mocks on ports 8001 and 8002. It uses public fixture tokens instead of
+`SERVICE_SECRET`. Import `postman/server-rules-and-university-record.postman_collection.json` into Postman and run the
 whole collection in its original order; validation and access errors are expected in negative tests.
 
 ### Images
