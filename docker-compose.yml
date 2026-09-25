@@ -191,7 +191,7 @@ services:
       timeout: 3s
       retries: 20
   server-rules:
-    image: loredanaaaa/server-rules-service:1.0.0
+    image: loredanaaaa/server-rules-service:1.0.1
     environment:
       APP_ENV: local
       APP_DEBUG: "false"
@@ -234,7 +234,7 @@ services:
       timeout: 3s
       retries: 20
   university-record:
-    image: loredanaaaa/university-record-service:1.0.0
+    image: loredanaaaa/university-record-service:1.0.1
     environment:
       APP_ENV: local
       APP_DEBUG: "false"

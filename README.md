@@ -822,19 +822,16 @@ history stay in sync.
 
 Public multi-platform images (linux/amd64 and linux/arm64):
 
-- `loredanaaaa/server-rules-service:1.0.0`, HTTP port 8001
-- `loredanaaaa/university-record-service:1.0.0`, HTTP port 8002
+- `loredanaaaa/server-rules-service:1.0.1`, HTTP port 8001
+- `loredanaaaa/university-record-service:1.0.1`, HTTP port 8002
 
-The root docker-compose.yml references these published images directly. Each service has its own PostgreSQL 17 container, credentials, private database network and named volume. Apps also join backend for future REST integration. DB setup scripts are in db/server-rules and db/university-record; Laravel migrations remain the source of table definitions. No sample-data population runs at startup.
+The root docker-compose.yml references these published images directly. Each service has its own PostgreSQL 17 container, credentials, private database network and named volume. Apps also join backend for future REST integration. DB setup scripts are in db/server-rules and db/university-record; Laravel migrations remain the source of table definitions and run automatically before Apache starts in images 1.0.1 and later. A migration failure stops startup; migrations do not seed sample data. No sample-data population runs at startup.
 
 Fill all required values in .env.example after copying to .env, including SERVER_RULES_APP_KEY, SERVER_RULES_DB_PASSWORD, UNIVERSITY_RECORD_APP_KEY and UNIVERSITY_RECORD_DB_PASSWORD. Generate each APP_KEY with `docker run --rm IMAGE php artisan key:generate --show`; use the corresponding image above. Never commit .env. Existing Player/Session keys and environment requirements still apply to the full stack. Compose interpolates required variables even for unselected services.
 
 Stop standalone services occupying ports 8001/8002 first. From the common repository:
 
 ```sh
-docker compose up -d server-rules-db university-record-db
-docker compose run --rm server-rules php artisan migrate --force
-docker compose run --rm university-record php artisan migrate --force
 docker compose up -d server-rules university-record
 ```
 
@@ -842,4 +839,6 @@ This shared deployment creates its own volumes; it does not reuse the standalone
 
 Both services currently use public mock authentication in APP_ENV=local. University Record consumes a mocked ApplicantInitialized payload; it does not generate stories or connect to Applicant/Credential. Server Rules uses its local event sink. The shared stack does not yet provide real token/event interoperability for these two services. Their provisional semantics and lab exceptions remain documented in their private service READMEs; this Docker change does not change the communication contract.
 
-Verification: standalone Docker/PostgreSQL Postman runs passed 124 Server Rules and 123 University Record assertions. Both published image indexes were checked anonymously for amd64 and arm64. Standalone persistence checks also passed: 3 rule sets and 1 applicant remained after container removal and recreation. The shared Compose configuration validates. Both services and their separate PostgreSQL containers started successfully from the published images, and migrations completed. The user also confirmed all 124 Server Rules and 123 University Record Postman assertions passed against this shared deployment. This verifies these two services with their lab mocks; it does not claim full-team integration or ARM64 runtime testing.
+Previous 1.0.0 verification (manual migrations): standalone Docker/PostgreSQL Postman runs passed 124 Server Rules and 123 University Record assertions. Both published image indexes were checked anonymously for amd64 and arm64. Standalone persistence checks also passed: 3 rule sets and 1 applicant remained after container removal and recreation. The shared Compose configuration validates. Both services and their separate PostgreSQL containers started successfully from the published images, and migrations completed. The user also confirmed all 124 Server Rules and 123 University Record Postman assertions passed against this shared deployment. This verifies these two services with their lab mocks; it does not claim full-team integration or ARM64 runtime testing.
+
+Startup migration fix (1.0.1): both AMD64 test builds automatically migrated fresh isolated PostgreSQL volumes, then passed all 78 requests and 247 assertions. Both apps reported Nothing to migrate on restart. Published 1.0.1 manifests are publicly accessible for AMD64 and ARM64; ARM64 runtime was not tested. For existing deployments, run `docker compose pull server-rules university-record` followed by `docker compose up -d server-rules university-record`. No manual migration command or volume deletion is needed.
