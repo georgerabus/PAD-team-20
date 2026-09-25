@@ -258,9 +258,85 @@ services:
         condition: service_healthy
     networks: [university-record, backend]
 
+  # ---- Applicant Service ----
+  applicant-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: applicant
+      POSTGRES_USER: applicant
+      POSTGRES_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
+    volumes:
+      - applicant-db-data:/var/lib/postgresql/data
+      - ./db/applicant:/docker-entrypoint-initdb.d:ro
+    networks: [applicant]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U applicant -d applicant"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  applicant:
+    image: georgerabus/pad-applicant-service:1.0.0
+    depends_on:
+      applicant-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: applicant-db
+      DB_DATABASE: applicant
+      DB_USERNAME: applicant
+      DB_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
+      SERVICE_SECRET: ${SERVICE_SECRET:?set SERVICE_SECRET in .env}
+    volumes:
+      # Session's public key, to check session tokens locally.
+      - ./keys/session/public.pem:/var/www/html/keys/session/public.pem:ro
+    ports:
+      - "127.0.0.1:${APPLICANT_PORT:-8003}:80"
+    networks: [applicant, backend]
+    restart: unless-stopped
+
+  # ---- Credential Service ----
+  credential-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: credential
+      POSTGRES_USER: credential
+      POSTGRES_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
+    volumes:
+      - credential-db-data:/var/lib/postgresql/data
+      - ./db/credential:/docker-entrypoint-initdb.d:ro
+    networks: [credential]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U credential -d credential"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  credential:
+    image: georgerabus/pad-credential-service:1.0.0
+    depends_on:
+      credential-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: credential-db
+      DB_DATABASE: credential
+      DB_USERNAME: credential
+      DB_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
+      SERVICE_SECRET: ${SERVICE_SECRET:?set SERVICE_SECRET in .env}
+      CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
+    volumes:
+      - ./keys/session/public.pem:/var/www/html/keys/session/public.pem:ro
+    ports:
+      - "127.0.0.1:${CREDENTIAL_PORT:-8004}:80"
+    networks: [credential, backend]
+    restart: unless-stopped
+
 # One private network per service for its database, and a shared one the
 # services use to reach each other.
 networks:
+  applicant:
+  credential:
   server-rules:
   university-record:
   backend:
@@ -270,6 +346,8 @@ networks:
   moderation:
 
 volumes:
+  applicant-db-data:
+  credential-db-data:
   server-rules-db-data:
   university-record-db-data:
   player-db-data:
