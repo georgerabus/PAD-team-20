@@ -85,7 +85,7 @@ No service sits at the centre; each one calls only what it needs for its own job
 We work in two languages, and the split follows the service pairs each of us
 owns: two of us write our two services in **TypeScript (NestJS)**, the other two
 write theirs in **PHP (Laravel)**. The pairs were drawn so that the language
-boundary mostly falls along a natural seam in the system — the services that
+boundary mostly falls along a natural seam in the system â€” the services that
 coordinate the game and push real-time updates (Session, Moderation, Discord
 DMs) are TypeScript, and the services that generate, store and validate data
 (Applicant + Credential, Server Rules + University Record) are PHP. The one
@@ -100,34 +100,34 @@ also keeps the heavily typed contract below honest at compile time.
 
 Player Service is TypeScript for an ownership reason, not a technical one. On
 its own it is CRUD, JWT issuance, one outbound call and one event consumer, and
-would sit comfortably in Laravel — it started there. It moved because the same
+would sit comfortably in Laravel â€” it started there. It moved because the same
 teammate owns Player and Session, and Session has to be TypeScript. One person on
 one stack is worth more than the marginally better fit, and the contract between
 them (`POST /sessions` and `SessionCompleted`) is small enough that nothing is
 lost either way.
 
 PHP/Laravel earns its place on the data cluster. These four services are mostly
-CRUD and payload validation — generate a coherent (and often deliberately
-inconsistent) applicant, store records, check a document against a schema — and
+CRUD and payload validation â€” generate a coherent (and often deliberately
+inconsistent) applicant, store records, check a document against a schema â€” and
 Eloquent together with Laravel's form-request validation cover exactly that with
 little ceremony. It is also the stack their owners are fastest in, which matters
 under a weekly lab cadence: a working, well-understood service beats a
 marginally lighter one we have to fight. The trade-off is that Laravel is a
 heavier runtime than a PHP microframework, and PHP is weaker at long-lived
-real-time and async work than Node — which is precisely why the real-time and
+real-time and async work than Node â€” which is precisely why the real-time and
 orchestration cluster is TypeScript, not PHP. Where these services consume
 events, they do so through a long-running worker (php-amqplib), not inside the
 request cycle.
 
 Every service owns its own PostgreSQL database. No service reads another's
 tables; the only route to another service's data is through its endpoints or
-its events. This is deliberate — a shared database would let us skip the
+its events. This is deliberate â€” a shared database would let us skip the
 contract, which is the one thing Lab 0 exists to force us to get right.
 
 | Service | Language / Framework | Datastore | Talks via | Why |
 |---|---|---|---|---|
 | Player | TypeScript / NestJS | PostgreSQL | REST, consumes events | Identity, friends and levels; same owner as Session, so same stack |
-| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket, events | Runs the shift, pushes live state, owns role→access |
+| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket, events | Runs the shift, pushes live state, owns roleâ†’access |
 | Applicant | PHP / Laravel | PostgreSQL | REST, events both ways | Presented claim and deception; can start an applicant |
 | Credential | PHP / Laravel | PostgreSQL | REST, events both ways | Signs, stores and validates documents; can start an applicant |
 | Server Rules | PHP / Laravel | PostgreSQL | REST, publishes events | Rule generation, storage and verdict evaluation |
@@ -278,24 +278,24 @@ time (see Moderation Service).
 | `POST /auth/register` `[REST]` | `{username, email, password}` | `201 {playerId, token}` |
 | `POST /auth/login` `[REST]` | `{email, password}` | `200 {token, refreshToken, playerId}` |
 | `POST /auth/refresh` `[REST]` | `{refreshToken}` | `200 {token}` |
-| `GET /players/{id}` `[REST]` | — | `200 PlayerProfile` |
+| `GET /players/{id}` `[REST]` | â€” | `200 PlayerProfile` |
 | `PATCH /players/{id}` `[REST]` | `{displayName?, avatar?}` | `200 PlayerProfile` |
-| `GET /players/{id}/progression` `[REST]` | — | `200 {xp, level, completedShifts, disciplinaryActions}` |
-| `GET /players/{id}/friends` `[REST]` | — | `200 [{playerId, username, status}]` |
+| `GET /players/{id}/progression` `[REST]` | â€” | `200 {xp, level, completedShifts, disciplinaryActions}` |
+| `GET /players/{id}/friends` `[REST]` | â€” | `200 [{playerId, username, status}]` |
 | `POST /players/{id}/friends` `[REST]` | `{friendId}` | `201 {status:"pending"\|"accepted"}` |
-| `DELETE /players/{id}/friends/{friendId}` `[REST]` | — | `204` |
+| `DELETE /players/{id}/friends/{friendId}` `[REST]` | â€” | `204` |
 | `POST /teams` `[REST]` | `{name, ownerId}` | `201 {teamId}` |
-| `GET /teams/{id}` `[REST]` | — | `200 {teamId, name, ownerId, members[]}` |
+| `GET /teams/{id}` `[REST]` | â€” | `200 {teamId, name, ownerId, members[]}` |
 | `POST /teams/{id}/members` `[REST]` | `{playerId}` | `201` |
-| `DELETE /teams/{id}/members/{playerId}` `[REST]` | — | `204` |
-| `POST /teams/{id}/sessions` `[REST]` | — *(caller becomes moderator; must be a member)* | `201 {sessionId, sessionToken}` *(calls Session)* |
+| `DELETE /teams/{id}/members/{playerId}` `[REST]` | â€” | `204` |
+| `POST /teams/{id}/sessions` `[REST]` | â€” *(caller becomes moderator; must be a member)* | `201 {sessionId, sessionToken}` *(calls Session)* |
 
 A shift is opened from the team because the team lives here. Player checks that
 the caller is a member and hands Session the roster with each member's level, so
 Session never has to ask Player who someone is.
 
 ```json
-// PlayerProfile — displayName and avatar are null until PATCH sets them
+// PlayerProfile â€” displayName and avatar are null until PATCH sets them
 { "playerId":"UUID", "username":"string", "email":"string",
   "level":"int", "xp":"int", "displayName":"string|null",
   "avatar":"string|null", "createdAt":"timestamp" }
@@ -309,7 +309,7 @@ team's `members[]` therefore names each member, since an id alone could not be
 turned into a username, and carries `level` because that is what Session's
 roster needs.
 
-**Consumes** `SessionCompleted` → award XP, increment `completedShifts`, apply
+**Consumes** `SessionCompleted` â†’ award XP, increment `completedShifts`, apply
 `disciplinaryActions`. Levels follow XP: one level per 100 XP.
 
 ### Server Moderation Session Service
@@ -317,21 +317,21 @@ roster needs.
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /sessions` `[REST]` | `{teamId, moderatorId, members:[{playerId, level}]}` *(internal, Player)* | `201 {sessionId, status:"lobby", sessionToken}` |
-| `POST /sessions/{id}/join` `[REST]` | — *(player token; must be on the roster)* | `200 {role:"junior_mod", sessionToken}` \| `403` |
+| `POST /sessions/{id}/join` `[REST]` | â€” *(player token; must be on the roster)* | `200 {role:"junior_mod", sessionToken}` \| `403` |
 | `POST /sessions/{id}/roles` `[REST]` | `{assignments:[RoleAssignment]}` | `200` |
-| `POST /sessions/{id}/start` `[REST]` | — | `200 {status:"active", startedAt, ruleSetVersion}` *(calls Server Rules)* |
-| `POST /sessions/{id}/token` `[REST]` | — | `200 {sessionToken}` *(current role and recordAccess)* |
-| `POST /sessions/{id}/next-applicant` `[REST]` | — | `202 {applicantId}` *(calls Applicant)* |
-| `GET /sessions/{id}/current-applicant` `[REST]` | — | `200 {applicantId}` |
+| `POST /sessions/{id}/start` `[REST]` | â€” | `200 {status:"active", startedAt, ruleSetVersion}` *(calls Server Rules)* |
+| `POST /sessions/{id}/token` `[REST]` | â€” | `200 {sessionToken}` *(current role and recordAccess)* |
+| `POST /sessions/{id}/next-applicant` `[REST]` | â€” | `202 {applicantId}` *(calls Applicant)* |
+| `GET /sessions/{id}/current-applicant` `[REST]` | â€” | `200 {applicantId}` |
 | `POST /sessions/{id}/outcomes` `[REST]` | `{decisionId, applicantId, correct, penalty}` *(internal, Moderation)* | `200` |
-| `POST /sessions/{id}/end` `[REST]` | — | `200 SessionResult` *(reads the decision log from Moderation, emits SessionCompleted)* |
-| `GET /sessions/{id}` `[REST]` | — | `200 SessionState` |
-| `GET /sessions/{id}/results` `[REST]` | — | `200 SessionResult` |
+| `POST /sessions/{id}/end` `[REST]` | â€” | `200 SessionResult` *(reads the decision log from Moderation, emits SessionCompleted)* |
+| `GET /sessions/{id}` `[REST]` | â€” | `200 SessionState` |
+| `GET /sessions/{id}/results` `[REST]` | â€” | `200 SessionResult` |
 | `GET /sessions/{id}/access-check` `[REST]` | `?playerId=&channel=` *(internal, Discord DMs)* | `200 {allowed:bool}` |
-| `WS /sessions/{id}/live` `[WS]` | — | server pushes state changes |
+| `WS /sessions/{id}/live` `[WS]` | â€” | server pushes state changes |
 
 ```json
-// RoleAssignment — drives both record access and channel access
+// RoleAssignment â€” drives both record access and channel access
 { "playerId":"UUID", "role":"enum(moderator|junior_mod)",
   "recordAccess":["enum(enrollment|emails|courses|schedule|fcim)"],
   "channelAccess":["string"] }
@@ -348,9 +348,9 @@ roster needs.
   "perPlayer":[{"playerId":"UUID","xpAwarded":"int","disciplinaryActions":"int"}] }
 ```
 
-> **Two different "access" ideas — do not conflate them.** `RoleAssignment` here
+> **Two different "access" ideas â€” do not conflate them.** `RoleAssignment` here
 > governs *which member of the moderation team may read which record or channel*
-> — a moderator-side permission, carried in the session token and checked
+> â€” a moderator-side permission, carried in the session token and checked
 > through `access-check`. It is unrelated to `allowedChannels` in a
 > `RuleVerdict` (Server Rules), which is part of the *applicant's* outcome: which
 > Discord channels that applicant would be allowed into if admitted. One is about
@@ -376,7 +376,7 @@ the moderator decides, so only the moderator can collect them.
 
 **Publishes** `SessionCompleted { sessionId, perPlayer[] }`.
 
-Session is the authority on role→access. Record access goes into the session
+Session is the authority on roleâ†’access. Record access goes into the session
 token, which University Record reads without calling back. Channel access is
 checked live through `access-check`, because a Discord DMs socket stays open for
 the whole shift while a token only lives 15 minutes.
@@ -386,24 +386,24 @@ the whole shift while a token only lives 15 minutes.
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /applicants` `[REST]` | `{sessionId}` | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
-| `GET /applicants/{id}` `[REST]` | *(internal, Moderation — includes impostor flag)* | `200 Applicant` |
-| `GET /applicants/{id}/public` `[REST]` | — | `200 ApplicantPublic` *(what the moderator sees)* |
-| `GET /applicants?sessionId=` `[REST]` | — | `200 [ApplicantPublic]` |
+| `GET /applicants/{id}` `[REST]` | *(internal, Moderation â€” includes impostor flag)* | `200 Applicant` |
+| `GET /applicants/{id}/public` `[REST]` | â€” | `200 ApplicantPublic` *(what the moderator sees)* |
+| `GET /applicants?sessionId=` `[REST]` | â€” | `200 [ApplicantPublic]` |
 
 ```json
-// ApplicantPublic — presented info only, may be false by design
+// ApplicantPublic â€” presented info only, may be false by design
 { "applicantId":"UUID", "name":"string", "studentId":"string",
   "major":"string", "year":"int",
   "role":"enum(student|other_major|ta|staff|alumni|outsider)",
   "universityStatus":"enum(enrolled|graduated|expelled|none)",
   "courses":["string"] }
 
-// Applicant — adds internal fields, never exposed to players
+// Applicant â€” adds internal fields, never exposed to players
 { "...ApplicantPublic":"...", "isImpostor":"bool", "strategy":"string" }
 ```
 
 **Publishes** `ApplicantInitialized` when contacted first.
-**Consumes** `ApplicantInitialized` → materialize the `presented` and
+**Consumes** `ApplicantInitialized` â†’ materialize the `presented` and
 `deception` slice.
 
 ### Credential Service
@@ -429,9 +429,9 @@ Credential checks it locally, without calling Session or Player:
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /applicants` `[REST]` | `{sessionId}` | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
-| `GET /applicants/{id}/credentials` `[REST]` | — *(session token, moderator)* | `200 [Credential]` \| `401` \| `403` \| `404` |
-| `GET /credentials/{id}` `[REST]` | — *(session token, moderator)* | `200 Credential` \| `401` \| `403` \| `404` |
-| `POST /applicants/{id}/credentials/validate` `[REST]` | — *(internal, Moderation)* | `200 CredentialValidation` \| `404` |
+| `GET /applicants/{id}/credentials` `[REST]` | â€” *(session token, moderator)* | `200 [Credential]` \| `401` \| `403` \| `404` |
+| `GET /credentials/{id}` `[REST]` | â€” *(session token, moderator)* | `200 Credential` \| `401` \| `403` \| `404` |
+| `POST /applicants/{id}/credentials/validate` `[REST]` | â€” *(internal, Moderation)* | `200 CredentialValidation` \| `404` |
 
 Right after an applicant is created, a read may return `404 APPLICANT_NOT_FOUND`
 until Credential has consumed `ApplicantInitialized`; clients retry.
@@ -451,7 +451,7 @@ design, not a bad request.
 platform.
 
 ```json
-// Credential — what the moderator sees; the signature stays inside
+// Credential â€” what the moderator sees; the signature stays inside
 { "credentialId":"UUID", "applicantId":"UUID",
   "type":"enum(student_id|university_email|enrollment_confirmation|else_registration)",
   "fields":{} }                       // per type, table above
@@ -462,7 +462,7 @@ platform.
              "major":"FAF", "year":3, "issuedAt":"2023-09-01",
              "expiresAt":"2027-06-30" } }
 
-// CredentialValidation — internal, Moderation only
+// CredentialValidation â€” internal, Moderation only
 { "applicantId":"UUID", "documentsValid":"bool",
   "results":[
     { "credentialId":"UUID", "type":"string",
@@ -490,9 +490,9 @@ adds an issue:
 |---|---|---|
 | A required field for the type is absent or empty | `missing_field` | `structurallyValid: false` |
 | A field has the wrong shape: `studentId` not `^[A-Z]{2,4}\d{6}$`, `address` not on a `utm.md` domain, a date not ISO-8601, an enum value outside its set | `malformed_field` | `structurallyValid: false` |
-| `expiresAt` is before today | `expired` | — |
+| `expiresAt` is before today | `expired` | â€” |
 | `signature` does not verify | `signature_mismatch` | `authentic: false` |
-| `studentId`, `fullName`, `faculty` or `major` differs from the same field on another of the applicant's documents | `field_conflict` | — |
+| `studentId`, `fullName`, `faculty` or `major` differs from the same field on another of the applicant's documents | `field_conflict` | â€” |
 
 A document is sound when it has no issues; `documentsValid` is true only when
 every document is sound. Validation reads nothing outside Credential (not the
@@ -500,7 +500,7 @@ claim, not the records), so a genuine document carried by the wrong person
 passes. That case is left to the players.
 
 **Publishes** `ApplicantInitialized` when contacted first.
-**Consumes** `ApplicantInitialized` → materialize the `documents` slice as above.
+**Consumes** `ApplicantInitialized` â†’ materialize the `documents` slice as above.
 
 ### Server Rules Service
 
@@ -512,8 +512,8 @@ harder between shifts. Each new rule set is announced as `RulesUpdated`.
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /rules` `[REST]` | `{sessionId, level}` *(internal, Session)* | `201 RuleSet` *(emits RulesUpdated)* |
-| `GET /rules/current?sessionId=` `[REST]` | — | `200 RuleSet` |
-| `GET /rules/{ruleSetVersion}` `[REST]` | — | `200 RuleSet` |
+| `GET /rules/current?sessionId=` `[REST]` | â€” | `200 RuleSet` |
+| `GET /rules/{ruleSetVersion}` `[REST]` | â€” | `200 RuleSet` |
 | `POST /rules/evaluate` `[REST]` | `{subject, ruleSetVersion}` *(internal, Moderation)* | `200 RuleVerdict` |
 
 ```json
@@ -526,7 +526,7 @@ harder between shifts. Each new rule set is announced as `RulesUpdated`.
 // RuleSet
 { "ruleSetVersion":"int", "sessionId":"UUID", "rules":["Rule"] }
 
-// Subject — what the rules are evaluated against, assembled by Moderation
+// Subject â€” what the rules are evaluated against, assembled by Moderation
 { "claim":{ "role":"enum(student|other_major|ta|staff|alumni|outsider)",
             "major":"string", "year":"int",
             "universityStatus":"enum(enrolled|graduated|expelled|none)" },
@@ -534,14 +534,14 @@ harder between shifts. Each new rule set is announced as `RulesUpdated`.
   "previouslyBanned":"bool",          // Applicant: strategy is banned_retry
   "documentsValid":"bool" }           // Credential: CredentialValidation.documentsValid
 
-// RuleVerdict — the correct answer
+// RuleVerdict â€” the correct answer
 { "verdict":"enum(accept|reject|flag|ban)",
   "allowedChannels":["string"],
   "violations":[{"ruleId":"UUID","predicate":"string"}] }
 ```
 
 The verdict is the most severe effect among the rules that fire: `ban`, then
-`deny` (→ `reject`), then `flag`, otherwise `accept`. The rules read the claim,
+`deny` (â†’ `reject`), then `flag`, otherwise `accept`. The rules read the claim,
 not the records: for a genuine applicant the claim is the truth, and a
 non-genuine one already fails `is_genuine`.
 
@@ -555,8 +555,8 @@ from the session token alone: its `sessionId` must match the applicant's session
 and its `recordAccess` must include the record type, otherwise `403`. The
 service never calls Session, because Session wrote the assignment into the token
 when it issued it. **Reference** records are session-global: `courses` is the
-current course catalog — still gated by the `courses` assignment, but not
-applicant-specific — and `academic-year` is open reference data that needs no
+current course catalog â€” still gated by the `courses` assignment, but not
+applicant-specific â€” and `academic-year` is open reference data that needs no
 assignment and is never `403`.
 
 Reads come from the junior mods' client, and from Discord DMs when a player
@@ -565,15 +565,15 @@ shares a record into a channel, made with that player's token.
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /applicants` `[REST]` | `{sessionId}` | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
-| `GET /records/enrollment?applicantId=` `[REST]` | — | `200 {enrolled, studentId, major, year, status}` \| `403` |
-| `GET /records/emails?applicantId=` `[REST]` | — | `200 {email, inGroupList}` \| `403` |
+| `GET /records/enrollment?applicantId=` `[REST]` | â€” | `200 {enrolled, studentId, major, year, status}` \| `403` |
+| `GET /records/emails?applicantId=` `[REST]` | â€” | `200 {email, inGroupList}` \| `403` |
 | `GET /records/courses` `[REST]` | *(global, gated by `courses` assignment)* | `200 {courses:[string]}` \| `403` |
 | `GET /records/academic-year` `[REST]` | *(global, open reference)* | `200 {year, semester:enum(autumn\|spring)}` |
-| `GET /records/schedule?applicantId=` `[REST]` | — | `200 {entries:[{course, day, time}]}` \| `403` |
-| `GET /records/fcim-messages?applicantId=` `[REST]` | — | `200 {messages:[{author, text, ts}]}` \| `403` |
+| `GET /records/schedule?applicantId=` `[REST]` | â€” | `200 {entries:[{course, day, time}]}` \| `403` |
+| `GET /records/fcim-messages?applicantId=` `[REST]` | â€” | `200 {messages:[{author, text, ts}]}` \| `403` |
 
 **Publishes** `ApplicantInitialized` when contacted first.
-**Consumes** `ApplicantInitialized` → materialize the `groundTruth` slice.
+**Consumes** `ApplicantInitialized` â†’ materialize the `groundTruth` slice.
 
 ### Moderation Service
 
@@ -593,7 +593,7 @@ are hunting for.
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /decisions` `[REST]` | `{sessionId, applicantId, moderatorId, action:enum(accept\|reject\|flag\|ban)}` | `201 Decision` |
-| `GET /decisions/{id}` `[REST]` | — | `200 Decision` |
+| `GET /decisions/{id}` `[REST]` | â€” | `200 Decision` |
 | `GET /sessions/{id}/decisions` `[REST]` | *(also read by Session at shift end)* | `200 [Decision]` |
 
 ```json
@@ -607,7 +607,7 @@ are hunting for.
   "decidedAt":"timestamp" }
 ```
 
-**Consumes** `RulesUpdated` → remember the current `ruleSetVersion` per session.
+**Consumes** `RulesUpdated` â†’ remember the current `ruleSetVersion` per session.
 
 ### Discord DMs Service
 
@@ -627,13 +627,13 @@ to the sender only.
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /sessions/{id}/channels` `[REST]` | `{names:[string]}` | `201 [{channelId, name}]` |
-| `GET /sessions/{id}/channels` `[REST]` | — | `200 [{channelId, name}]` *(only accessible ones)* |
-| `GET /channels/{id}/messages?limit=&before=` `[REST]` | — | `200 [Message]` \| `403` |
+| `GET /sessions/{id}/channels` `[REST]` | â€” | `200 [{channelId, name}]` *(only accessible ones)* |
+| `GET /channels/{id}/messages?limit=&before=` `[REST]` | â€” | `200 [Message]` \| `403` |
 | `POST /channels/{id}/messages` `[REST]` | `{content}` or `{share: Share}` | `201 Message` \| `403` |
-| `WS /ws?sessionId=&token=` `[WS]` | — | see below |
+| `WS /ws?sessionId=&token=` `[WS]` | â€” | see below |
 
 ```json
-// Share — what to pull into the channel
+// Share â€” what to pull into the channel
 { "applicantId":"UUID",
   "source":"enum(credential|enrollment|emails|courses|schedule|fcim-messages|academic-year)",
   "credentialId":"UUID|null" }        // required when source is credential
@@ -644,13 +644,13 @@ to the sender only.
   "ts":"timestamp" }
 ```
 
-WebSocket — client → server:
+WebSocket â€” client â†’ server:
 ```json
 { "type":"join", "channelId":"UUID" }
 { "type":"message", "channelId":"UUID", "content":"string" }
 { "type":"share", "channelId":"UUID", "share":"Share" }
 ```
-server → client:
+server â†’ client:
 ```json
 { "type":"message", "channelId":"UUID", "authorId":"UUID", "content":"string|null", "attachment":"object|null", "ts":"timestamp" }
 { "type":"presence", "channelId":"UUID", "online":["UUID"] }
@@ -669,17 +669,17 @@ server → client:
 
 | Caller | Callee | Purpose |
 |---|---|---|
-| Player | Session | `POST /sessions` — open a session for a team, with its roster |
-| Session | Server Rules | `POST /rules` — rule set for the shift that is starting |
-| Session | Applicant | `POST /applicants` — request the next applicant |
-| Session | Moderation | `GET /sessions/{id}/decisions` — decision log for the final result |
-| Moderation | Applicant | `GET /applicants/{id}` — claim and deception |
-| Moderation | Credential | `POST /applicants/{id}/credentials/validate` — are the documents sound |
-| Moderation | Server Rules | `POST /rules/evaluate` — the correct verdict |
-| Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision |
-| Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access |
-| Discord DMs | Credential | `GET /credentials/{id}` — share a document into a channel |
-| Discord DMs | University Record | `GET /records/*` — share a record into a channel |
+| Player | Session | `POST /sessions` â€” open a session for a team, with its roster |
+| Session | Server Rules | `POST /rules` â€” rule set for the shift that is starting |
+| Session | Applicant | `POST /applicants` â€” request the next applicant |
+| Session | Moderation | `GET /sessions/{id}/decisions` â€” decision log for the final result |
+| Moderation | Applicant | `GET /applicants/{id}` â€” claim and deception |
+| Moderation | Credential | `POST /applicants/{id}/credentials/validate` â€” are the documents sound |
+| Moderation | Server Rules | `POST /rules/evaluate` â€” the correct verdict |
+| Moderation | Session | `POST /sessions/{id}/outcomes` â€” report the decision |
+| Discord DMs | Session | `GET /sessions/{id}/access-check` â€” enforce channel access |
+| Discord DMs | Credential | `GET /credentials/{id}` â€” share a document into a channel |
+| Discord DMs | University Record | `GET /records/*` â€” share a record into a channel |
 
 ## Running the System
 
@@ -756,11 +756,11 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```
 master (protected, reflects the last presented lab)
-└── dev (protected, integration branch)
-    ├── feat/<service>-<slug>    new functionality
-    ├── fix/<service>-<slug>     bug fixes
-    ├── docs/<slug>              documentation
-    └── chore/<slug>             tooling and setup
+â””â”€â”€ dev (protected, integration branch)
+    â”œâ”€â”€ feat/<service>-<slug>    new functionality
+    â”œâ”€â”€ fix/<service>-<slug>     bug fixes
+    â”œâ”€â”€ docs/<slug>              documentation
+    â””â”€â”€ chore/<slug>             tooling and setup
 ```
 
 Neither `master` nor `dev` takes direct pushes; both require a pull request. Feature branches are short lived, one per task, and deleted after merge.
@@ -810,8 +810,34 @@ Versions track labs rather than releases, in the form `v{lab}.{iteration}.{patch
 ## Project Board
 
 Task tracking for the upcoming labs lives in the GitHub Project linked to this
-repository, which works like Trello: columns for **Backlog → In progress →
-Review → Done**, one card per task, each card carrying the service it touches and
+repository, which works like Trello: columns for **Backlog â†’ In progress â†’
+Review â†’ Done**, one card per task, each card carrying the service it touches and
 the teammate who owns it. Pull requests reference the card they close (see
 [Pull request contents](#pull-request-contents)) so the board and the commit
 history stay in sync.
+
+## Server Rules and University Record Docker lab
+
+Public multi-platform images (linux/amd64 and linux/arm64):
+
+- `loredanaaaa/server-rules-service:1.0.0`, HTTP port 8001
+- `loredanaaaa/university-record-service:1.0.0`, HTTP port 8002
+
+The root docker-compose.yml references these published images directly. Each service has its own PostgreSQL 17 container, credentials, private database network and named volume. Apps also join backend for future REST integration. DB setup scripts are in db/server-rules and db/university-record; Laravel migrations remain the source of table definitions. No sample-data population runs at startup.
+
+Fill all required values in .env.example after copying to .env, including SERVER_RULES_APP_KEY, SERVER_RULES_DB_PASSWORD, UNIVERSITY_RECORD_APP_KEY and UNIVERSITY_RECORD_DB_PASSWORD. Generate each APP_KEY with `docker run --rm IMAGE php artisan key:generate --show`; use the corresponding image above. Never commit .env. Existing Player/Session keys and environment requirements still apply to the full stack. Compose interpolates required variables even for unselected services.
+
+Stop standalone services occupying ports 8001/8002 first. From the common repository:
+
+```sh
+docker compose up -d server-rules-db university-record-db
+docker compose run --rm server-rules php artisan migrate --force
+docker compose run --rm university-record php artisan migrate --force
+docker compose up -d server-rules university-record
+```
+
+This shared deployment creates its own volumes; it does not reuse the standalone private-repository volumes. Ordinary `docker compose down` retains data; `down -v` deletes it.
+
+Both services currently use public mock authentication in APP_ENV=local. University Record consumes a mocked ApplicantInitialized payload; it does not generate stories or connect to Applicant/Credential. Server Rules uses its local event sink. The shared stack does not yet provide real token/event interoperability for these two services. Their provisional semantics and lab exceptions remain documented in their private service READMEs; this Docker change does not change the communication contract.
+
+Verification: standalone Docker/PostgreSQL Postman runs passed 124 Server Rules and 123 University Record assertions. Both published image indexes were checked anonymously for amd64 and arm64. Standalone persistence checks also passed: 3 rule sets and 1 applicant remained after container removal and recreation. The shared Compose configuration validates, but its runtime check remains pending.
