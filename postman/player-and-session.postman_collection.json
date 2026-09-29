@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Player & Server Moderation Session",
-    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, the shift ends, and the SessionCompleted event turns the result into XP. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nBefore running, set the `serviceSecret` variable to the SERVICE_SECRET both services share. Start Player on port 3000 and Session on port 3001, or run the stack with `docker compose up`.\n\nTwo things are not here. WS /sessions/{id}/live cannot be part of a collection export: connect to ws://localhost:3001/sessions/<sessionId>/live?token=<sessionToken> to watch the same shift live. POST /internal/events/session-completed on Player is not in the communication contract either: it stands in for the RabbitMQ subscription until the broker is part of the stack.",
+    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, the shift ends, and the SessionCompleted event turns the result into XP. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nAuthentication happens at the Gateway, which validates the token and passes the identity on as X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. This collection calls the services directly, so it sets those headers itself, exactly as the Gateway would. Point it at the Gateway instead and it is the token that travels, in Authorization.\n\nEndpoints marked internal carry nothing: they are internal because the Gateway refuses to route them from outside.\n\nTwo things are not here. WS /sessions/{id}/live cannot be part of a collection export, and it is the one place a token is still checked by the service, since clients connect to it directly: ws://localhost:3001/sessions/<sessionId>/live?token=<sessionToken>. POST /internal/events/session-completed on Player is not in the communication contract either: it stands in for the RabbitMQ subscription until the broker is part of the stack.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -12,10 +12,6 @@
     {
       "key": "sessionBaseUrl",
       "value": "http://localhost:3001"
-    },
-    {
-      "key": "serviceSecret",
-      "value": ""
     }
   ],
   "item": [
@@ -206,8 +202,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -244,8 +240,8 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -282,8 +278,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -325,8 +321,8 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -368,8 +364,8 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{juniorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{juniorId}}"
               }
             ],
             "url": {
@@ -408,8 +404,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -452,8 +448,8 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -493,8 +489,8 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -531,8 +527,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -570,8 +566,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -620,10 +616,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-Service-Secret",
-                "value": "{{serviceSecret}}"
               }
             ],
             "url": {
@@ -660,8 +652,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{juniorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{juniorId}}"
               }
             ],
             "url": {
@@ -701,8 +693,16 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "moderator"
               }
             ],
             "url": {
@@ -739,8 +739,16 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "moderator"
               }
             ],
             "url": {
@@ -778,8 +786,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{juniorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{juniorId}}"
               }
             ],
             "url": {
@@ -805,7 +813,9 @@
                   "pm.collectionVariables.set('juniorSessionToken', token);",
                   "// What a client does after shift_started: pick up its recordAccess.",
                   "const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());",
-                  "pm.test('now carries recordAccess', () => pm.expect(claims.recordAccess).to.include('enrollment'));"
+                  "pm.test('now carries recordAccess', () => pm.expect(claims.recordAccess).to.include('enrollment'));",
+                  "// The Gateway turns these claims into headers; here the collection does it.",
+                  "pm.collectionVariables.set('juniorRecordAccess', claims.recordAccess.join(','));"
                 ]
               }
             }
@@ -817,8 +827,16 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "moderator"
               }
             ],
             "url": {
@@ -852,8 +870,20 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{juniorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{juniorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "junior_mod"
+              },
+              {
+                "key": "X-Record-Access",
+                "value": "{{juniorRecordAccess}}"
               }
             ],
             "url": {
@@ -889,10 +919,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-Service-Secret",
-                "value": "{{serviceSecret}}"
               }
             ],
             "url": {
@@ -929,8 +955,16 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "moderator"
               }
             ],
             "url": {
@@ -965,12 +999,7 @@
           "name": "Channel access-check (internal, from Discord DMs)",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-Service-Secret",
-                "value": "{{serviceSecret}}"
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
               "host": [
@@ -1012,8 +1041,16 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "moderator"
               }
             ],
             "url": {
@@ -1053,8 +1090,20 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{juniorSessionToken}}"
+                "key": "X-Player-Id",
+                "value": "{{juniorId}}"
+              },
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionId}}"
+              },
+              {
+                "key": "X-Session-Role",
+                "value": "junior_mod"
+              },
+              {
+                "key": "X-Record-Access",
+                "value": "{{juniorRecordAccess}}"
               }
             ],
             "url": {
@@ -1095,10 +1144,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-Service-Secret",
-                "value": "{{serviceSecret}}"
               }
             ],
             "url": {
@@ -1145,8 +1190,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -1186,10 +1231,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-Service-Secret",
-                "value": "{{serviceSecret}}"
               }
             ],
             "url": {
@@ -1226,8 +1267,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -1266,8 +1307,8 @@
             "method": "DELETE",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
@@ -1301,8 +1342,8 @@
             "method": "DELETE",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{moderatorToken}}"
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
               }
             ],
             "url": {
