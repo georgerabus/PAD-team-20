@@ -157,9 +157,13 @@ Three communication patterns are in use, each where it fits:
 
 ### Conventions
 
-**Auth.** There are two kinds of JWT, both RS256. Every service holds the public
-keys of both issuers (Player and Session) as configuration and validates tokens
-locally, so no call ever goes back to the issuer to check one.
+**Auth.** A caller authenticates once, at the Gateway. It is the only service
+reachable from outside; the rest sit on internal networks and answer nothing
+that did not come through it.
+
+There are two kinds of JWT, both RS256, each still issued by the service that
+owns it and signed with that service's private key. The Gateway holds both
+issuers' public keys, and is the only place a token is checked.
 
 - The **player token** is issued by Player Service on login and carries `sub`
   (the `playerId`). It is enough for player-scoped calls: profile, friends,
@@ -171,22 +175,54 @@ locally, so no call ever goes back to the issuer to check one.
   minutes. Session-scoped calls carry it: document and record reads, channel
   reads, decisions, and the two WebSocket handshakes.
 
-Every REST call except `POST /auth/*` carries `Authorization: Bearer <token>`.
+Which token a call carries is unchanged; what changed is that the Gateway is
+what reads it.
 
-**Service-to-service calls.** Endpoints marked *internal* are called by another
-service, never by a client, and no token can show that: every player holds one.
-They carry a shared secret instead, the same value for every service, in a
-header:
+Every REST call except `POST /auth/*` carries `Authorization: Bearer <token>`
+**to the Gateway**, which answers `401 INVALID_TOKEN` itself when it is missing,
+expired or wrongly signed. `POST /auth/*` passes through untouched, since a
+caller cannot present a token before logging in.
 
-```
-X-Service-Secret: <the shared secret>
-```
+**The Gateway does not forward `Authorization`.** It validates the token, drops
+the header, and passes what it learned to the service as headers:
 
-A service refuses to start without it and answers `401 SERVICE_AUTH_REQUIRED`
-when it is missing or wrong. The secret is configuration, like the signing
-keys: it lives in each service's environment and is never committed. Without
-it, anyone holding a player token could open a session with a roster and levels
-they made up, or report the outcome of a decision nobody made.
+| Header | Sent on | Value |
+|---|---|---|
+| `X-Player-Id` | every authenticated call | the token's `sub` |
+| `X-Session-Id` | calls made with a session token | its `sessionId` |
+| `X-Session-Role` | calls made with a session token | `moderator` or `junior_mod` |
+| `X-Record-Access` | calls made with a session token | the record types, comma separated; sent empty when the player has none |
+
+For REST, a service therefore never sees a token: it reads the identity from
+these headers and trusts them, because nothing but the Gateway can reach it. A
+service must not publish a port of its own, and a deployment that exposes one
+breaks this guarantee for everybody.
+
+Two things stay with the services. Player and Session keep their **private**
+keys, because they still issue the tokens. Session and Discord DMs keep
+Session's **public** key, for the WebSocket handshakes described below, which
+do not pass through the Gateway. No other service holds a key.
+
+**Internal endpoints.** Endpoints marked *internal* are called by another
+service, never by a client, and every call between services goes through the
+Gateway too. The Gateway is what keeps them internal: it refuses to route those
+paths for a caller from outside. This replaces the shared `X-Service-Secret`
+header used before the Gateway existed.
+
+A service-to-service call carries no token and no `X-Player-Id`: the caller is
+a service, not a person, and the token was already consumed at the Gateway on
+the way in. The Gateway accepts these calls because they come from inside the
+system and refuses the same paths from outside, so what a request may do
+depends on where it entered, not on a secret each service checks. The trade-off
+is deliberate: anything already inside the system is trusted, which is the
+consequence of having a single authentication boundary.
+
+**WebSockets are the exception.** The Gateway negotiates the connection and
+hands the client a URL to reach the service directly, so it is not left sitting
+in the middle of a long-lived socket. Those connections never pass through it
+and carry no injected headers, so the services that own a socket, Session and
+Discord DMs, validate the session token themselves on the handshake, against
+Session's public key.
 
 **Types.** `UUID` = RFC-4122 string. `timestamp` = ISO-8601 UTC. `date` =
 ISO-8601 date. `enum(...)` = closed string set. All bodies are
@@ -199,9 +235,11 @@ ISO-8601 date. `enum(...)` = closed string set. All bodies are
 ```
 
 Common statuses: `400` bad payload, `401` no/invalid token, `403` record,
-document or channel access denied, `404` missing, `409` conflict/idempotency,
-`422` validation. A `422` carries `"error":"VALIDATION_FAILED"`, with the
-field errors in `details`.
+document or channel access denied, `404` missing, `408` the request took longer
+than the service allows, `409` conflict/idempotency, `422` validation, `429`
+the service is already handling as many requests as it allows at once, sent
+with a `Retry-After` header. A `422` carries `"error":"VALIDATION_FAILED"`,
+with the field errors in `details`.
 
 **Event envelope.** Async events travel through RabbitMQ as:
 
@@ -378,9 +416,10 @@ the moderator decides, so only the moderator can collect them.
 **Publishes** `SessionCompleted { sessionId, perPlayer[] }`.
 
 Session is the authority on role→access. Record access goes into the session
-token, which University Record reads without calling back. Channel access is
-checked live through `access-check`, because a Discord DMs socket stays open for
-the whole shift while a token only lives 15 minutes.
+token, and reaches University Record as `X-Record-Access` once the Gateway has
+read the token, so neither service calls back here. Channel access is checked
+live through `access-check`, because a Discord DMs socket stays open for the
+whole shift while a token only lives 15 minutes.
 
 ### Applicant Service
 
