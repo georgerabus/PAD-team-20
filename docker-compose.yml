@@ -124,7 +124,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: augustinploteanu/pad-dm-service:0.2.0
+    image: augustinploteanu/pad-dm-service:1.3.0
     depends_on:
       dm-db:
         condition: service_healthy
@@ -135,6 +135,9 @@ services:
       DB_NAME: dm
       DB_USER: dm
       DB_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
+      SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/session-public.pem
+    volumes:
+      - ./keys/session/public.pem:/app/keys/session-public.pem:ro
     ports:
       - "3002:3000"
     networks: [dm, backend]
@@ -159,7 +162,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: augustinploteanu/pad-moderation-service:0.2.0
+    image: augustinploteanu/pad-moderation-service:1.3.0
     depends_on:
       moderation-db:
         condition: service_healthy
