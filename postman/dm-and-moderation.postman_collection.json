@@ -1,17 +1,164 @@
 {
   "info": {
     "name": "Discord DMs & Moderation",
-    "description": "Basic CRUD smoke test for both services at their current stage (no auth, no cross-service calls yet). Runs top to bottom: a channel is created, a message is posted into it, both are read/updated/deleted, and a moderation decision goes through the same cycle. Ids are carried from one request to the next automatically.\n\nStart Discord DMs Service on port 3000 and Moderation Service on port 3001 (PORT=3001 npm run start).",
+    "description": "Every REST endpoint of both services, run top to bottom. The services read the caller from the identity headers in the communication contract (X-Player-Id, X-Session-Id, X-Session-Role, X-Record-Access) and never see a token on REST, so this collection sets those headers itself. Requests that leave them out act as a service-to-service call.\n\nThe first request generates fresh ids for the session, the moderator and a junior mod, so the collection can be re-run without clashes. Upstream services are mocked inside both services, which is what makes the access and outcome checks deterministic.\n\nStart the stack (docker compose up -d dm-db dm-service moderation-db moderation-service). Discord DMs answers on 3002 and Moderation on 3003; change dmBaseUrl and moderationBaseUrl to run them standalone.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "dmBaseUrl", "value": "http://localhost:3002" },
-    { "key": "moderationBaseUrl", "value": "http://localhost:3003" }
+    {"key": "dmBaseUrl", "value": "http://localhost:3002"},
+    {"key": "moderationBaseUrl", "value": "http://localhost:3003"}
   ],
   "item": [
     {
       "name": "Discord DMs Service",
       "item": [
+        {
+          "name": "List channels (moderator)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh ids every run, so the collection can be re-run without clashes.",
+                  "const v = pm.collectionVariables;",
+                  "v.set('sessionId', pm.variables.replaceIn('{{$guid}}'));",
+                  "v.set('otherSessionId', pm.variables.replaceIn('{{$guid}}'));",
+                  "v.set('moderatorId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// The mocked Session access-check lets a junior mod into a channel when",
+                  "// sha256(sessionId:playerId:channel) >= 0.2. Pick a junior mod with at least",
+                  "// one allowed and one denied default channel, so both cases can be tested.",
+                  "const channels = ['enrollment-check', 'faculty-check', 'course-registration', 'general-mod-chat'];",
+                  "const allowed = (s, p, c) => (CryptoJS.SHA256(`${s}:${p}:${c}`).words[0] >>> 0) / 0xffffffff >= 0.2;",
+                  "for (;;) {",
+                  "  const j = pm.variables.replaceIn('{{$guid}}');",
+                  "  const ok = channels.filter((c) => allowed(v.get('sessionId'), j, c));",
+                  "  if (ok.length > 0 && ok.length < channels.length) {",
+                  "    v.set('juniorId', j);",
+                  "    v.set('juniorChannel', ok[0]);",
+                  "    v.set('deniedChannel', channels.find((c) => !ok.includes(c)));",
+                  "    break;",
+                  "  }",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('the four default channels', () => pm.expect(body.map((c) => c.name)).to.have.members(['enrollment-check', 'faculty-check', 'course-registration', 'general-mod-chat']));",
+                  "pm.test('only channelId and name', () => body.forEach((c) => pm.expect(c).to.have.all.keys('channelId', 'name')));",
+                  "const byName = Object.fromEntries(body.map((c) => [c.name, c.channelId]));",
+                  "pm.collectionVariables.set('generalChannelId', byName['general-mod-chat']);",
+                  "pm.collectionVariables.set('juniorChannelId', byName[pm.collectionVariables.get('juniorChannel')]);",
+                  "pm.collectionVariables.set('deniedChannelId', byName[pm.collectionVariables.get('deniedChannel')]);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels"
+          }
+        },
+        {
+          "name": "List channels without identity headers (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('error is IDENTITY_REQUIRED', () => pm.expect(pm.response.json().error).to.eql('IDENTITY_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {"method": "GET", "header": [], "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels"}
+        },
+        {
+          "name": "List channels with a player token only (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SESSION_TOKEN_REQUIRED', () => pm.expect(pm.response.json().error).to.eql('SESSION_TOKEN_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "X-Player-Id", "value": "{{moderatorId}}"}],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels"
+          }
+        },
+        {
+          "name": "List channels of another session (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SESSION_MISMATCH', () => pm.expect(pm.response.json().error).to.eql('SESSION_MISMATCH'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{otherSessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels"
+          }
+        },
+        {
+          "name": "List channels (junior mod, only accessible ones)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const names = pm.response.json().map((c) => c.name);",
+                  "pm.test('includes an allowed channel', () => pm.expect(names).to.include(pm.collectionVariables.get('juniorChannel')));",
+                  "pm.test('hides the denied channel', () => pm.expect(names).to.not.include(pm.collectionVariables.get('deniedChannel')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels"
+          }
+        },
         {
           "name": "Create channel",
           "event": [
@@ -20,315 +167,568 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('201', () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.collectionVariables.set('channelId', body.id);"
+                  "pm.test('returns the new channel', () => pm.expect(body.map((c) => c.name)).to.eql(['evidence']));",
+                  "pm.collectionVariables.set('evidenceChannelId', body[0].channelId);"
                 ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"name\": \"general-mod-chat\"\n}"
-            }
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels",
+            "body": {"mode": "raw", "raw": "{\"names\": [\"evidence\"]}"}
           }
         },
         {
-          "name": "Create message",
+          "name": "Create an existing channel (expect 409)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "const body = pm.response.json();",
-                  "pm.collectionVariables.set('messageId', body.id);"
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "pm.test('error is CHANNEL_EXISTS', () => pm.expect(pm.response.json().error).to.eql('CHANNEL_EXISTS'));"
                 ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/messages",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["messages"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"channelId\": \"{{channelId}}\",\n  \"authorId\": \"{{$guid}}\",\n  \"content\": \"hello\"\n}"
-            }
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels",
+            "body": {"mode": "raw", "raw": "{\"names\": [\"evidence\"]}"}
           }
         },
         {
-          "name": "List channels",
+          "name": "Create channel as junior mod (expect 403)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is ROLE_NOT_ALLOWED', () => pm.expect(pm.response.json().error).to.eql('ROLE_NOT_ALLOWED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels",
+            "body": {"mode": "raw", "raw": "{\"names\": [\"side-chat\"]}"}
+          }
+        },
+        {
+          "name": "Create channel with an invalid name (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('error is VALIDATION_FAILED', () => pm.expect(pm.response.json().error).to.eql('VALIDATION_FAILED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/sessions/{{sessionId}}/channels",
+            "body": {"mode": "raw", "raw": "{\"names\": [\"Not Valid!\"]}"}
+          }
+        },
+        {
+          "name": "Post message (author from X-Player-Id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.test('Message shape', () => pm.expect(pm.response.json()).to.have.all.keys('messageId', 'channelId', 'authorId', 'content', 'attachment', 'ts'));",
+                  "pm.test('authorId is X-Player-Id, not the body', () => pm.expect(pm.response.json().authorId).to.eql(pm.collectionVariables.get('moderatorId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{evidenceChannelId}}/messages",
+            "body": {"mode": "raw", "raw": "{\"content\": \"m1\", \"authorId\": \"{{$guid}}\"}"}
+          }
+        },
+        {
+          "name": "Post second message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('secondMessageId', pm.response.json().messageId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{evidenceChannelId}}/messages",
+            "body": {"mode": "raw", "raw": "{\"content\": \"m2\"}"}
+          }
+        },
+        {
+          "name": "Post third message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {"type": "text/javascript", "exec": ["pm.test('201', () => pm.response.to.have.status(201));"]}
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{evidenceChannelId}}/messages",
+            "body": {"mode": "raw", "raw": "{\"content\": \"m3\"}"}
+          }
+        },
+        {
+          "name": "List messages, newest first",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('m3, m2', () => pm.expect(pm.response.json().map((m) => m.content)).to.eql(['m3', 'm2']));"
+                ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels"]
-            }
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{evidenceChannelId}}/messages?limit=2"
           }
         },
         {
-          "name": "Get channel by id",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels", "{{channelId}}"]
-            }
-          }
-        },
-        {
-          "name": "Update channel",
+          "name": "List messages before a message",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('name updated', () => pm.expect(pm.response.json().name).to.eql('renamed-channel'));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels", "{{channelId}}"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"renamed-channel\"\n}"
-            }
-          }
-        },
-        {
-          "name": "List messages by channel",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('contains the created message', () => pm.expect(pm.response.json().some(m => m.id === pm.collectionVariables.get('messageId'))).to.be.true);"
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('m1 only', () => pm.expect(pm.response.json().map((m) => m.content)).to.eql(['m1']));"
                 ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{dmBaseUrl}}/messages?channelId={{channelId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["messages"],
-              "query": [{ "key": "channelId", "value": "{{channelId}}" }]
-            }
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{evidenceChannelId}}/messages?before={{secondMessageId}}"
           }
         },
         {
-          "name": "Update message",
+          "name": "Post message with neither content nor share (expect 422)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('error is VALIDATION_FAILED', () => pm.expect(pm.response.json().error).to.eql('VALIDATION_FAILED'));"
+                ]
               }
             }
           ],
           "request": {
-            "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/messages/{{messageId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["messages", "{{messageId}}"]
-            },
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{generalChannelId}}/messages",
+            "body": {"mode": "raw", "raw": "{}"}
+          }
+        },
+        {
+          "name": "Post message with both content and share (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('error is VALIDATION_FAILED', () => pm.expect(pm.response.json().error).to.eql('VALIDATION_FAILED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{generalChannelId}}/messages",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"content\": \"hello, edited\"\n}"
+              "raw": "{\"content\": \"x\", \"share\": {\"applicantId\": \"{{$guid}}\", \"source\": \"courses\"}}"
             }
           }
         },
         {
-          "name": "Delete message",
+          "name": "Moderator shares a credential",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"]
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.test('Message shape', () => pm.expect(pm.response.json()).to.have.all.keys('messageId', 'channelId', 'authorId', 'content', 'attachment', 'ts'));",
+                  "pm.test('content is null', () => pm.expect(pm.response.json().content).to.be.null);",
+                  "pm.test('attachment is the credential', () => pm.expect(pm.response.json().attachment.source).to.eql('credential'));"
+                ]
               }
             }
           ],
           "request": {
-            "method": "DELETE",
-            "url": {
-              "raw": "{{dmBaseUrl}}/messages/{{messageId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["messages", "{{messageId}}"]
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{generalChannelId}}/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"share\": {\"applicantId\": \"{{$guid}}\", \"source\": \"credential\", \"credentialId\": \"{{$guid}}\"}}"
             }
           }
         },
         {
-          "name": "Delete channel",
+          "name": "Share a credential without credentialId (expect 422)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"]
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('error is VALIDATION_FAILED', () => pm.expect(pm.response.json().error).to.eql('VALIDATION_FAILED'));"
+                ]
               }
             }
           ],
           "request": {
-            "method": "DELETE",
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels", "{{channelId}}"]
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{generalChannelId}}/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"share\": {\"applicantId\": \"{{$guid}}\", \"source\": \"credential\"}}"
             }
           }
         },
         {
-          "name": "Get deleted channel (expect 404)",
+          "name": "Share a record not in X-Record-Access (expect 403)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SHARE_DENIED', () => pm.expect(pm.response.json().error).to.eql('SHARE_DENIED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{generalChannelId}}/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"share\": {\"applicantId\": \"{{$guid}}\", \"source\": \"enrollment\"}}"
+            }
+          }
+        },
+        {
+          "name": "Junior mod shares an assigned record",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.test('attachment is the enrollment record', () => pm.expect(pm.response.json().attachment.source).to.eql('enrollment'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{juniorChannelId}}/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"share\": {\"applicantId\": \"{{$guid}}\", \"source\": \"enrollment\"}}"
+            }
+          }
+        },
+        {
+          "name": "Junior mod shares a credential (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SHARE_DENIED', () => pm.expect(pm.response.json().error).to.eql('SHARE_DENIED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{juniorChannelId}}/messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"share\": {\"applicantId\": \"{{$guid}}\", \"source\": \"credential\", \"credentialId\": \"{{$guid}}\"}}"
+            }
+          }
+        },
+        {
+          "name": "Junior mod posts to a denied channel (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is CHANNEL_ACCESS_DENIED', () => pm.expect(pm.response.json().error).to.eql('CHANNEL_ACCESS_DENIED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{deniedChannelId}}/messages",
+            "body": {"mode": "raw", "raw": "{\"content\": \"let me in\"}"}
+          }
+        },
+        {
+          "name": "Junior mod reads a denied channel (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is CHANNEL_ACCESS_DENIED', () => pm.expect(pm.response.json().error).to.eql('CHANNEL_ACCESS_DENIED'));"
+                ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels/{{channelId}}",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels", "{{channelId}}"]
-            }
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{deniedChannelId}}/messages"
           }
         },
         {
-          "name": "Create channel for sharing",
+          "name": "Read a channel of another session (expect 403)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "const body = pm.response.json();",
-                  "pm.collectionVariables.set('channelId2', body.id);"
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SESSION_MISMATCH', () => pm.expect(pm.response.json().error).to.eql('SESSION_MISMATCH'));"
                 ]
               }
             }
           ],
           "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/channels",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["channels"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"name\": \"enrollment-check\"\n}"
-            }
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{otherSessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{generalChannelId}}/messages"
           }
         },
         {
-          "name": "Share a university record into a new channel",
+          "name": "Read an unknown channel (expect 404)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "const body = pm.response.json();",
-                  "pm.test('content is null', () => pm.expect(body.content).to.be.null);",
-                  "pm.test('attachment carries the shared source', () => pm.expect(body.attachment.source).to.eql('enrollment'));"
+                  "pm.test('404', () => pm.response.to.have.status(404));",
+                  "pm.test('error is CHANNEL_NOT_FOUND', () => pm.expect(pm.response.json().error).to.eql('CHANNEL_NOT_FOUND'));"
                 ]
               }
             }
           ],
           "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/messages",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["messages"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"channelId\": \"{{channelId2}}\",\n  \"authorId\": \"{{$guid}}\",\n  \"share\": { \"applicantId\": \"{{$guid}}\", \"source\": \"enrollment\" }\n}"
-            }
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/channels/{{$guid}}/messages"
           }
         },
         {
-          "name": "Create message with neither content nor share (expect 400)",
+          "name": "Read a channel with an invalid id (expect 400)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('error is INVALID_ID', () => pm.expect(pm.response.json().error).to.eql('INVALID_ID'));"
+                ]
               }
             }
           ],
           "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{dmBaseUrl}}/messages",
-              "host": ["{{dmBaseUrl}}"],
-              "path": ["messages"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"channelId\": \"{{channelId2}}\",\n  \"authorId\": \"{{$guid}}\"\n}"
-            }
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{dmBaseUrl}}/channels/not-a-uuid/messages"
           }
         }
       ]
@@ -337,168 +737,483 @@
       "name": "Moderation Service",
       "item": [
         {
-          "name": "Create decision",
+          "name": "Create decision (accept)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "const body = pm.response.json();",
-                  "pm.collectionVariables.set('decisionId', body.id);",
-                  "pm.test('correct is a boolean', () => pm.expect(body.correct).to.be.a('boolean'));",
-                  "pm.test('outcome is one of the contract values', () => pm.expect(['correct','wrong_admit','wrong_reject','missed_ban']).to.include(body.outcome));",
-                  "pm.test('penalty matches outcome', () => pm.expect(body.penalty).to.eql(body.outcome === 'correct' ? 0 : body.penalty));"
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json();",
+                  "pm.test('Decision shape', () => pm.expect(d).to.have.all.keys('decisionId', 'sessionId', 'applicantId', 'moderatorId', 'action', 'correct', 'violatedRules', 'penalty', 'outcome', 'decidedAt'));",
+                  "pm.test('moderatorId is X-Player-Id', () => pm.expect(d.moderatorId).to.eql(pm.collectionVariables.get('moderatorId')));",
+                  "pm.test('correct matches outcome', () => pm.expect(d.correct).to.eql(d.outcome === 'correct'));",
+                  "pm.test('penalty matches outcome', () => pm.expect(d.penalty).to.eql({ correct: 0, wrong_reject: 10, wrong_admit: 20, missed_ban: 30 }[d.outcome]));",
+                  "pm.collectionVariables.set('decisionId', d.decisionId);",
+                  "pm.collectionVariables.set('decidedApplicantId', d.applicantId);"
                 ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions"]
-            },
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{$guid}}\",\n  \"action\": \"accept\"\n}"
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"accept\"}"
             }
           }
         },
         {
-          "name": "Create decision with invalid action (expect 400)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"moderatorId\": \"{{$guid}}\",\n  \"action\": \"maybe\"\n}"
-            }
-          }
-        },
-        {
-          "name": "List decisions",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions"]
-            }
-          }
-        },
-        {
-          "name": "Get decision by id",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions", "{{decisionId}}"]
-            }
-          }
-        },
-        {
-          "name": "Update decision",
+          "name": "Create decision (reject)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('action updated', () => pm.expect(pm.response.json().action).to.eql('ban'));"
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json();",
+                  "pm.test('Decision shape', () => pm.expect(d).to.have.all.keys('decisionId', 'sessionId', 'applicantId', 'moderatorId', 'action', 'correct', 'violatedRules', 'penalty', 'outcome', 'decidedAt'));",
+                  "pm.test('moderatorId is X-Player-Id', () => pm.expect(d.moderatorId).to.eql(pm.collectionVariables.get('moderatorId')));",
+                  "pm.test('correct matches outcome', () => pm.expect(d.correct).to.eql(d.outcome === 'correct'));",
+                  "pm.test('penalty matches outcome', () => pm.expect(d.penalty).to.eql({ correct: 0, wrong_reject: 10, wrong_admit: 20, missed_ban: 30 }[d.outcome]));"
                 ]
               }
             }
           ],
           "request": {
-            "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions", "{{decisionId}}"]
-            },
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"action\": \"ban\",\n  \"penalty\": 10\n}"
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"reject\"}"
             }
           }
         },
         {
-          "name": "Delete decision",
+          "name": "Create decision (flag)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"]
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json();",
+                  "pm.test('Decision shape', () => pm.expect(d).to.have.all.keys('decisionId', 'sessionId', 'applicantId', 'moderatorId', 'action', 'correct', 'violatedRules', 'penalty', 'outcome', 'decidedAt'));",
+                  "pm.test('moderatorId is X-Player-Id', () => pm.expect(d.moderatorId).to.eql(pm.collectionVariables.get('moderatorId')));",
+                  "pm.test('correct matches outcome', () => pm.expect(d.correct).to.eql(d.outcome === 'correct'));",
+                  "pm.test('penalty matches outcome', () => pm.expect(d.penalty).to.eql({ correct: 0, wrong_reject: 10, wrong_admit: 20, missed_ban: 30 }[d.outcome]));"
+                ]
               }
             }
           ],
           "request": {
-            "method": "DELETE",
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions", "{{decisionId}}"]
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"flag\"}"
             }
           }
         },
         {
-          "name": "Get deleted decision (expect 404)",
+          "name": "Create decision (ban)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json();",
+                  "pm.test('Decision shape', () => pm.expect(d).to.have.all.keys('decisionId', 'sessionId', 'applicantId', 'moderatorId', 'action', 'correct', 'violatedRules', 'penalty', 'outcome', 'decidedAt'));",
+                  "pm.test('moderatorId is X-Player-Id', () => pm.expect(d.moderatorId).to.eql(pm.collectionVariables.get('moderatorId')));",
+                  "pm.test('correct matches outcome', () => pm.expect(d.correct).to.eql(d.outcome === 'correct'));",
+                  "pm.test('penalty matches outcome', () => pm.expect(d.penalty).to.eql({ correct: 0, wrong_reject: 10, wrong_admit: 20, missed_ban: 30 }[d.outcome]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"ban\"}"
+            }
+          }
+        },
+        {
+          "name": "Create decision with a moderatorId in the body (ignored)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.test('moderatorId is X-Player-Id', () => pm.expect(pm.response.json().moderatorId).to.eql(pm.collectionVariables.get('moderatorId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"moderatorId\": \"{{$guid}}\", \"action\": \"accept\"}"
+            }
+          }
+        },
+        {
+          "name": "Decide the same applicant again (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "pm.test('error is DECISION_EXISTS', () => pm.expect(pm.response.json().error).to.eql('DECISION_EXISTS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{decidedApplicantId}}\", \"action\": \"ban\"}"
+            }
+          }
+        },
+        {
+          "name": "Create decision without identity headers (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('error is IDENTITY_REQUIRED', () => pm.expect(pm.response.json().error).to.eql('IDENTITY_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"accept\"}"
+            }
+          }
+        },
+        {
+          "name": "Create decision as junior mod (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is ROLE_NOT_ALLOWED', () => pm.expect(pm.response.json().error).to.eql('ROLE_NOT_ALLOWED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"accept\"}"
+            }
+          }
+        },
+        {
+          "name": "Create decision for another session (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SESSION_MISMATCH', () => pm.expect(pm.response.json().error).to.eql('SESSION_MISMATCH'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{otherSessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"accept\"}"
+            }
+          }
+        },
+        {
+          "name": "Create decision with an invalid action (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('error is VALIDATION_FAILED', () => pm.expect(pm.response.json().error).to.eql('VALIDATION_FAILED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"sessionId\": \"{{sessionId}}\", \"applicantId\": \"{{$guid}}\", \"action\": \"maybe\"}"
+            }
+          }
+        },
+        {
+          "name": "Get decision (junior mod of the same session)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('same decision', () => pm.expect(pm.response.json().decisionId).to.eql(pm.collectionVariables.get('decisionId')));"
+                ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{moderationBaseUrl}}/decisions/{{decisionId}}",
-              "host": ["{{moderationBaseUrl}}"],
-              "path": ["decisions", "{{decisionId}}"]
+            "header": [
+              {"key": "X-Player-Id", "value": "{{juniorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "junior_mod"},
+              {"key": "X-Record-Access", "value": "enrollment"}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions/{{decisionId}}"
+          }
+        },
+        {
+          "name": "Get decision from another session (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SESSION_MISMATCH', () => pm.expect(pm.response.json().error).to.eql('SESSION_MISMATCH'));"
+                ]
+              }
             }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{otherSessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions/{{decisionId}}"
+          }
+        },
+        {
+          "name": "Get an unknown decision (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));",
+                  "pm.test('error is DECISION_NOT_FOUND', () => pm.expect(pm.response.json().error).to.eql('DECISION_NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions/{{$guid}}"
+          }
+        },
+        {
+          "name": "Get decision with an invalid id (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('error is INVALID_ID', () => pm.expect(pm.response.json().error).to.eql('INVALID_ID'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{moderationBaseUrl}}/decisions/not-a-uuid"
+          }
+        },
+        {
+          "name": "Session decision log (member)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const log = pm.response.json();",
+                  "pm.test('all five decisions, oldest first', () => pm.expect(log.length).to.eql(5));",
+                  "pm.test('starts with the first decision', () => pm.expect(log[0].decisionId).to.eql(pm.collectionVariables.get('decisionId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{sessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{moderationBaseUrl}}/sessions/{{sessionId}}/decisions"
+          }
+        },
+        {
+          "name": "Session decision log (internal call from Session, no identity)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('all five decisions', () => pm.expect(pm.response.json().length).to.eql(5));"
+                ]
+              }
+            }
+          ],
+          "request": {"method": "GET", "header": [], "url": "{{moderationBaseUrl}}/sessions/{{sessionId}}/decisions"}
+        },
+        {
+          "name": "Session decision log of another session (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('error is SESSION_MISMATCH', () => pm.expect(pm.response.json().error).to.eql('SESSION_MISMATCH'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Player-Id", "value": "{{moderatorId}}"},
+              {"key": "X-Session-Id", "value": "{{otherSessionId}}"},
+              {"key": "X-Session-Role", "value": "moderator"},
+              {"key": "X-Record-Access", "value": ""}
+            ],
+            "url": "{{moderationBaseUrl}}/sessions/{{sessionId}}/decisions"
           }
         }
       ]

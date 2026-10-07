@@ -9,9 +9,10 @@ CREATE TABLE IF NOT EXISTS channels (
   session_id UUID        NOT NULL,
   name       TEXT        NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  CONSTRAINT channels_session_name_key UNIQUE (session_id, name)
 );
 
+-- A message carries text or a shared attachment, never both.
 CREATE TABLE IF NOT EXISTS messages (
   message_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   channel_id UUID        NOT NULL REFERENCES channels (channel_id) ON DELETE CASCADE,
@@ -19,8 +20,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content    TEXT,
   attachment JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT messages_content_or_attachment CHECK (content IS NOT NULL OR attachment IS NOT NULL)
+  CONSTRAINT messages_content_xor_attachment CHECK ((content IS NULL) <> (attachment IS NULL))
 );
 
-CREATE INDEX IF NOT EXISTS messages_channel_id_idx ON messages (channel_id);
+CREATE INDEX IF NOT EXISTS messages_channel_page_idx ON messages (channel_id, created_at DESC, message_id DESC);
