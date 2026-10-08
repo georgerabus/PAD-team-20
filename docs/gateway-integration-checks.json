@@ -1,0 +1,275 @@
+{
+  "generated_at_utc": "2026-10-08T18:05:32.009439+00:00",
+  "passed": 37,
+  "total": 41,
+  "images": {
+    "gateway": "pad-gateway-service:dev",
+    "session": "catalinasiminiuc/pad-server-moderation-session-service:2.0.1",
+    "applicant": "georgerabus/pad-applicant-service:2.0.0-rc.1",
+    "credential": "georgerabus/pad-credential-service:2.0.0-rc.1",
+    "rules": "loredanaaaa/server-rules-service:1.0.1",
+    "records": "loredanaaaa/university-record-service:1.0.1",
+    "player": "catalinasiminiuc/pad-player-service:2.0.0",
+    "dm": "augustinploteanu/pad-dm-service:2.1.0",
+    "moderation": "augustinploteanu/pad-moderation-service:2.1.0",
+    "ws_edge": "caddy:2.11.2"
+  },
+  "checks": [
+    {
+      "check": "only Gateway and WS edge publish ports",
+      "passed": true,
+      "actual": [
+        "gateway",
+        "ws-edge"
+      ],
+      "expected": [
+        "gateway",
+        "ws-edge"
+      ]
+    },
+    {
+      "check": "Gateway publishes only its public listener",
+      "passed": true,
+      "actual": [
+        8000
+      ],
+      "expected": [
+        8000
+      ]
+    },
+    {
+      "check": "Player calls Session through internal Gateway",
+      "passed": true,
+      "actual": "http://gateway:8001/session",
+      "expected": "http://gateway:8001/session"
+    },
+    {
+      "check": "Gateway health",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "protected REST refuses forged headers without token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "public listener refuses internal session creation",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "WS-only port Session rejects ordinary REST",
+      "passed": true,
+      "actual": 404,
+      "expected": 404
+    },
+    {
+      "check": "WS-only port DM rejects ordinary REST",
+      "passed": true,
+      "actual": 404,
+      "expected": 404
+    },
+    {
+      "check": "register moderator through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "register junior through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "create a real team through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "add junior member to the real team",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "Player opens Session through Gateway port 8001",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "junior joins Session through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Session read works with its issued token",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Gateway negotiates session WS",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Gateway returns the published session WS URL",
+      "passed": true,
+      "actual": "ws://127.0.0.1:50545/sessions/8adc9c5d-e0ba-4cb0-ae8d-fc60f1a0fda9/live",
+      "expected": "ws://127.0.0.1:50545/sessions/8adc9c5d-e0ba-4cb0-ae8d-fc60f1a0fda9/live"
+    },
+    {
+      "check": "Gateway negotiates dm WS",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Gateway returns the published dm WS URL",
+      "passed": true,
+      "actual": "ws://127.0.0.1:46173/ws?sessionId=8adc9c5d-e0ba-4cb0-ae8d-fc60f1a0fda9",
+      "expected": "ws://127.0.0.1:46173/ws?sessionId=8adc9c5d-e0ba-4cb0-ae8d-fc60f1a0fda9"
+    },
+    {
+      "check": "Session WS validates a real session token",
+      "passed": true,
+      "actual": 101,
+      "expected": 101
+    },
+    {
+      "check": "Session WS rejects an invalid token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "DM WS validates the same session token",
+      "passed": true,
+      "actual": 101,
+      "expected": 101
+    },
+    {
+      "check": "DM WS rejects an invalid token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "internal Gateway creates a real Applicant",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "moderator reads the real Applicant through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "junior reads the real Applicant through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "public Gateway refuses the full internal Applicant view",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "ApplicantInitialized reaches Credential automatically",
+      "passed": false,
+      "actual": 404,
+      "expected": 200
+    },
+    {
+      "check": "moderator reads Credential fixture through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "junior is refused by Credential",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "Session assigns channel access",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Session starts the shift",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "DM creates real channels through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "DM lists channels using real Session access-check",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "DM posts using real Session access-check through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "DM shares Credential using forwarded identity through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "Moderation internal decision listing works through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Server Rules accepts internal creation without Authorization",
+      "passed": false,
+      "actual": 503,
+      "expected": 201
+    },
+    {
+      "check": "University Record accepts Gateway identity",
+      "passed": false,
+      "actual": 503,
+      "expected": 200
+    },
+    {
+      "check": "Session requests the next Applicant",
+      "passed": true,
+      "actual": 202,
+      "expected": 202
+    },
+    {
+      "check": "Session next-applicant exists in real Applicant service",
+      "passed": false,
+      "actual": 404,
+      "expected": 200
+    }
+  ]
+}
