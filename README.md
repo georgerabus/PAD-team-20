@@ -209,9 +209,11 @@ Gateway too. The Gateway is what keeps them internal: it refuses to route those
 paths for a caller from outside. This replaces the shared `X-Service-Secret`
 header used before the Gateway existed.
 
-A service-to-service call carries no token and no `X-Player-Id`: the caller is
-a service, not a person, and the token was already consumed at the Gateway on
-the way in.
+A service-to-service call carries no token: the caller is a service, not a
+person, and the token was already consumed at the Gateway on the way in.
+Usually it carries no identity either, because nobody in particular is asking:
+Session asking Server Rules for a rule set, or any of the three services being
+asked to start an applicant.
 
 **Which door a request arrives at is what decides this.** The Gateway listens
 on two ports:
@@ -231,9 +233,23 @@ http://gateway:8001/<service>/<path>
 
 So `POST /sessions` becomes `POST http://gateway:8001/session/sessions` when
 Player opens a shift. What a request may do depends on where it entered, not on
-a secret each service checks. The trade-off is deliberate: anything already
-inside the system is trusted, which is the consequence of having a single
-authentication boundary.
+a secret each service checks.
+
+**A service acting for a player says so.** Sometimes the caller is a service
+but the request is still on someone's behalf: Discord DMs reads a record
+because a player asked to share it, and University Record must apply *that
+player's* record access, not Discord DMs'. The calling service therefore
+forwards the four identity headers it received, unchanged, and the Gateway
+passes them through on the internal port rather than stripping them as it does
+on the public one.
+
+A service that receives no identity headers must not fall back to allowing the
+read: a per-applicant record read without `X-Record-Access` is `403`, the same
+as a read whose access does not cover that record.
+
+The trade-off is deliberate, and it is the consequence of having a single
+authentication boundary: on the internal port any service can set those
+headers to anything, so anything already inside the system is trusted.
 
 **WebSockets are the exception.** The Gateway negotiates the connection and
 hands the client a URL to reach the service directly, so it is not left sitting
@@ -676,11 +692,12 @@ against Session's `access-check`. A session's default channels are
 what is said is correct.
 
 **Sharing evidence.** A player can drop a document or one of their records into
-a channel. Discord DMs fetches it from Credential or University Record with *the
-sender's* session token, so the owning service applies its own rules (a junior
-mod cannot share a document, nobody can share a record they were not assigned),
-then posts it as a message with an `attachment`. A `403` from the owner goes back
-to the sender only.
+a channel. Discord DMs fetches it from Credential or University Record on *the
+sender's* behalf, forwarding the identity headers it received, so the owning
+service applies its own rules to that player (a junior mod cannot share a
+document, nobody can share a record they were not assigned), then posts it as a
+message with an `attachment`. A `403` from the owner goes back to the sender
+only.
 
 | Method & path | Request | Response |
 |---|---|---|
