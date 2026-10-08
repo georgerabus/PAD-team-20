@@ -1,17 +1,17 @@
 {
   "info": {
     "name": "Player & Server Moderation Session",
-    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, the shift ends, and the SessionCompleted event turns the result into XP. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nAuthentication happens at the Gateway, which validates the token and passes the identity on as X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. This collection calls the services directly, so it sets those headers itself, exactly as the Gateway would. Point it at the Gateway instead and it is the token that travels, in Authorization.\n\nEndpoints marked internal carry nothing: they are internal because the Gateway refuses to route them from outside.\n\nTwo things are not here. WS /sessions/{id}/live cannot be part of a collection export, and it is the one place a token is still checked by the service, since clients connect to it directly: ws://localhost:3001/sessions/<sessionId>/live?token=<sessionToken>. POST /internal/events/session-completed on Player is not in the communication contract either: it stands in for the RabbitMQ subscription until the broker is part of the stack.",
+    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is judged, the shift ends, and the SessionCompleted event turns the result into XP. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nEverything goes through the Gateway. A client sends Authorization: Bearer <token> and the Gateway validates it, drops the header and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request here sets those headers: the Gateway refuses to believe a caller who names itself, which the Gateway boundary folder checks.\n\nTwo base URLs, because a request's privileges come from the door it arrived at. gatewayBaseUrl is the published port, http://127.0.0.1:8080 from your machine. internalBaseUrl is http://gateway:8001, which is not published: it serves the endpoints the contract marks internal, the ones a service calls and a client may not. Reaching it means running inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run player-and-session.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000\n\nRun it from your machine instead and the story still runs, but the five internal requests cannot reach gateway:8001 and fail, along with the assertions downstream of them: scoring needs an outcome reported, and progression needs SessionCompleted delivered.\n\nWS /sessions/{id}/live cannot be part of a collection export. It is the one place a token is still checked by the service, because the client connects to it directly: POST /ws/negotiate at the Gateway returns the URL, ws://127.0.0.1:3011/sessions/<sessionId>/live, and the token goes in ?token= or Authorization. POST /internal/events/session-completed on Player is not in the communication contract either; it stands in for the RabbitMQ subscription until the broker is part of the stack.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
-      "key": "playerBaseUrl",
-      "value": "http://localhost:3000"
+      "key": "gatewayBaseUrl",
+      "value": "http://127.0.0.1:8080"
     },
     {
-      "key": "sessionBaseUrl",
-      "value": "http://localhost:3001"
+      "key": "internalBaseUrl",
+      "value": "http://gateway:8001"
     }
   ],
   "item": [
@@ -29,11 +29,12 @@
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/auth/register",
+              "raw": "{{gatewayBaseUrl}}/player/auth/register",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "auth",
                 "register"
               ]
@@ -79,11 +80,12 @@
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/auth/register",
+              "raw": "{{gatewayBaseUrl}}/player/auth/register",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "auth",
                 "register"
               ]
@@ -128,11 +130,12 @@
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/auth/login",
+              "raw": "{{gatewayBaseUrl}}/player/auth/login",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "auth",
                 "login"
               ]
@@ -168,11 +171,12 @@
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/auth/refresh",
+              "raw": "{{gatewayBaseUrl}}/player/auth/refresh",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "auth",
                 "refresh"
               ]
@@ -202,16 +206,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}"
               ]
@@ -240,16 +245,17 @@
                 "value": "application/json"
               },
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}"
               ]
@@ -278,16 +284,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/progression",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/progression",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}",
                 "progression"
@@ -321,16 +328,17 @@
                 "value": "application/json"
               },
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/friends",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/friends",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}",
                 "friends"
@@ -364,16 +372,17 @@
                 "value": "application/json"
               },
               {
-                "key": "X-Player-Id",
-                "value": "{{juniorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{juniorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{juniorId}}/friends",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{juniorId}}/friends",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{juniorId}}",
                 "friends"
@@ -404,16 +413,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/friends",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/friends",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}",
                 "friends"
@@ -448,16 +458,17 @@
                 "value": "application/json"
               },
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/teams",
+              "raw": "{{gatewayBaseUrl}}/player/teams",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "teams"
               ]
             },
@@ -489,16 +500,17 @@
                 "value": "application/json"
               },
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/teams/{{teamId}}/members",
+              "raw": "{{gatewayBaseUrl}}/player/teams/{{teamId}}/members",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "teams",
                 "{{teamId}}",
                 "members"
@@ -527,16 +539,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/teams/{{teamId}}",
+              "raw": "{{gatewayBaseUrl}}/player/teams/{{teamId}}",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "teams",
                 "{{teamId}}"
               ]
@@ -566,16 +579,17 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/teams/{{teamId}}/sessions",
+              "raw": "{{gatewayBaseUrl}}/player/teams/{{teamId}}/sessions",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "teams",
                 "{{teamId}}",
                 "sessions"
@@ -619,11 +633,12 @@
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions",
+              "raw": "{{internalBaseUrl}}/session/sessions",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{internalBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions"
               ]
             },
@@ -652,16 +667,17 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{juniorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{juniorToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/join",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/join",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "join"
@@ -693,24 +709,17 @@
                 "value": "application/json"
               },
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "moderator"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/roles",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/roles",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "roles"
@@ -739,24 +748,17 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "moderator"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/start",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/start",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "start"
@@ -786,16 +788,17 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{juniorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{juniorToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/token",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/token",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "token"
@@ -827,24 +830,17 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "moderator"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/next-applicant",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/next-applicant",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "next-applicant"
@@ -870,28 +866,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{juniorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "junior_mod"
-              },
-              {
-                "key": "X-Record-Access",
-                "value": "{{juniorRecordAccess}}"
+                "key": "Authorization",
+                "value": "Bearer {{juniorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/current-applicant",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/current-applicant",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "current-applicant"
@@ -922,11 +907,12 @@
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/outcomes",
+              "raw": "{{internalBaseUrl}}/session/sessions/{{sessionId}}/outcomes",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{internalBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "outcomes"
@@ -955,24 +941,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "moderator"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}"
               ]
@@ -1001,11 +980,12 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
+              "raw": "{{internalBaseUrl}}/session/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{internalBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "access-check"
@@ -1041,24 +1021,17 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "moderator"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/end",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/end",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "end"
@@ -1090,28 +1063,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{juniorId}}"
-              },
-              {
-                "key": "X-Session-Id",
-                "value": "{{sessionId}}"
-              },
-              {
-                "key": "X-Session-Role",
-                "value": "junior_mod"
-              },
-              {
-                "key": "X-Record-Access",
-                "value": "{{juniorRecordAccess}}"
+                "key": "Authorization",
+                "value": "Bearer {{juniorSessionToken}}"
               }
             ],
             "url": {
-              "raw": "{{sessionBaseUrl}}/sessions/{{sessionId}}/results",
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/results",
               "host": [
-                "{{sessionBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "session",
                 "sessions",
                 "{{sessionId}}",
                 "results"
@@ -1147,11 +1109,12 @@
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/internal/events/session-completed",
+              "raw": "{{internalBaseUrl}}/player/internal/events/session-completed",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{internalBaseUrl}}"
               ],
               "path": [
+                "player",
                 "internal",
                 "events",
                 "session-completed"
@@ -1190,16 +1153,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/progression",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/progression",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}",
                 "progression"
@@ -1234,11 +1198,12 @@
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/internal/events/session-completed",
+              "raw": "{{internalBaseUrl}}/player/internal/events/session-completed",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{internalBaseUrl}}"
               ],
               "path": [
+                "player",
                 "internal",
                 "events",
                 "session-completed"
@@ -1267,16 +1232,17 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/progression",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/progression",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}",
                 "progression"
@@ -1299,6 +1265,213 @@
       ]
     },
     {
+      "name": "The Gateway boundary",
+      "item": [
+        {
+          "name": "No token is refused",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "player",
+                "players",
+                "{{moderatorId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('INVALID_TOKEN', () => pm.expect(pm.response.json().error).to.eql('INVALID_TOKEN'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A header the caller sets is not believed",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Player-Id",
+                "value": "{{moderatorId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "player",
+                "players",
+                "{{moderatorId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Without a token this is all a forger has, and it buys nothing:",
+                  "// the Gateway strips X-Player-Id from whatever the client sent.",
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The token decides who is calling, not the header",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              },
+              {
+                "key": "X-Player-Id",
+                "value": "{{juniorId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "player",
+                "players",
+                "{{moderatorId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('the moderator, not the player named in the header', () => {",
+                  "  pm.expect(pm.response.json().playerId).to.eql(pm.collectionVariables.get('moderatorId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An internal endpoint is refused on the public port",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "session",
+                "sessions",
+                "{{sessionId}}",
+                "access-check"
+              ],
+              "query": [
+                {
+                  "key": "playerId",
+                  "value": "{{juniorId}}"
+                },
+                {
+                  "key": "channel",
+                  "value": "enrollment-check"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('INTERNAL_ENDPOINT', () => pm.expect(pm.response.json().error).to.eql('INTERNAL_ENDPOINT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Written differently, still refused",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/../{{sessionId}}/access-check?playerId={{juniorId}}&channel=enrollment-check",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "session",
+                "sessions",
+                "{{sessionId}}",
+                "..",
+                "{{sessionId}}",
+                "access-check"
+              ],
+              "query": [
+                {
+                  "key": "playerId",
+                  "value": "{{juniorId}}"
+                },
+                {
+                  "key": "channel",
+                  "value": "enrollment-check"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The Gateway normalises the path before deciding, so a dot segment",
+                  "// cannot smuggle an internal endpoint past it.",
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Cleanup",
       "item": [
         {
@@ -1307,16 +1480,17 @@
             "method": "DELETE",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/teams/{{teamId}}/members/{{juniorId}}",
+              "raw": "{{gatewayBaseUrl}}/player/teams/{{teamId}}/members/{{juniorId}}",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "teams",
                 "{{teamId}}",
                 "members",
@@ -1342,16 +1516,17 @@
             "method": "DELETE",
             "header": [
               {
-                "key": "X-Player-Id",
-                "value": "{{moderatorId}}"
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
               }
             ],
             "url": {
-              "raw": "{{playerBaseUrl}}/players/{{moderatorId}}/friends/{{juniorId}}",
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/friends/{{juniorId}}",
               "host": [
-                "{{playerBaseUrl}}"
+                "{{gatewayBaseUrl}}"
               ],
               "path": [
+                "player",
                 "players",
                 "{{moderatorId}}",
                 "friends",

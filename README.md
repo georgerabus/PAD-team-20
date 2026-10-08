@@ -79,14 +79,16 @@ flowchart LR
     session -->|Internal REST via 8001, requires real clients| gateway
     moderation -->|Internal REST via 8001| gateway
     dm -->|Internal REST via 8001| gateway
-    client -->|WS upgrades only: 3001 / 3002| ws[WS edge]
-    ws --> session
+    client -->|WS upgrade: 3011| session
+    client -->|WS upgrade only: 3002| ws[WS edge]
     ws --> dm
 ```
 
 Only Gateway publishes REST. Session and DM still validate Session tokens at
-their WS handshakes; the WS edge rejects ordinary HTTP routes, so those ports
-cannot be used to forge Gateway identity. Gateway negotiates their public URLs
+their WS handshakes. Neither published WS port carries a REST route, so
+neither can be used to forge Gateway identity: Session answers `426` on a
+listener that serves upgrades alone, and the WS edge refuses anything that is
+not DM's upgrade path. Gateway negotiates their public URLs
 using SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL. Read
 [integration status](docs/gateway-integration.md) for
 the image/client dependencies before treating this topology as a finished game.
@@ -851,7 +853,8 @@ Discord DMs receives Session's public key for its WS handshake.
 
 `GATEWAY_HTTP_PORT` changes the published REST port; 8080 is the default, avoiding
 other local applications on 8000. `SESSION_WS_PORT` and `DM_WS_PORT` default to
-3001 and 3002. Ordinary HTTP requests on those WS-only listeners return 404.
+3011 and 3002. Ordinary HTTP requests reach no route on either: Session
+answers `426 UPGRADE_REQUIRED`, the WS edge `404`.
 All published ports bind to loopback for the local presentation.
 
 Services call `http://gateway:8001/<prefix>/...`. Port 8001 is never published
@@ -864,10 +867,28 @@ no APP_KEY because they are JSON APIs with no cookie/session encryption.
 Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named
 volumes retain data; `docker compose down -v` deletes this deployment's data.
 
-The existing Postman collections were written for earlier direct-service
-setups and have not all been migrated. Run the new
-`tests/verify_compose_gateway.py` for the current boundary/flow checks; do not
-use the old collections' historical success as evidence for this deployment.
+`postman/player-and-session.postman_collection.json` runs the Player and
+Session story through the Gateway: the client sends `Authorization`, never the
+identity headers, and a folder of its own checks that the boundary holds — no
+token is `401`, a header the caller sets buys nothing, and an internal endpoint
+on the published port is `403`, however the path is written. The five requests
+the contract marks internal go to `gateway:8001`, which is not published, so
+the whole collection runs from inside the Docker network:
+
+```bash
+docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \
+  postman/newman run player-and-session.postman_collection.json \
+  --env-var gatewayBaseUrl=http://gateway:8000
+```
+
+Run it from the host instead and the client story still runs against
+`http://127.0.0.1:8080`, but those five requests cannot reach the internal
+listener and fail, along with the assertions that depend on them.
+
+The other collections were written for earlier direct-service setups and have
+not all been migrated. Run `tests/verify_compose_gateway.py` for the full
+boundary and flow checks; do not use the old collections' historical success as
+evidence for this deployment.
 The test starts its own fresh Compose project and removes only its temporary
 resources. It uses a manual document fixture solely for REST sharing and
 separately checks automatic propagation, so missing event delivery remains a

@@ -33,7 +33,7 @@ services:
       DM_BASE_URL: http://dm-service:3000
       PLAYER_PUBLIC_KEY_PATH: /app/keys/player-public.pem
       SESSION_PUBLIC_KEY_PATH: /app/keys/session-public.pem
-      SESSION_PUBLIC_WS_BASE_URL: ${SESSION_PUBLIC_WS_BASE_URL:-ws://127.0.0.1:${SESSION_WS_PORT:-3001}}
+      SESSION_PUBLIC_WS_BASE_URL: ${SESSION_PUBLIC_WS_BASE_URL:-ws://127.0.0.1:${SESSION_WS_PORT:-3011}}
       DM_PUBLIC_WS_BASE_URL: ${DM_PUBLIC_WS_BASE_URL:-ws://127.0.0.1:${DM_WS_PORT:-3002}}
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
@@ -51,14 +51,15 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # Session/DM share an HTTP port with their WebSocket handlers. Publish only
-  # their WS paths, so external callers cannot bypass Gateway's REST identity.
+  # Discord DMs still shares one HTTP port with its WebSocket handler, so only
+  # its WS path is published and anything else is refused here. Session needs
+  # no such hop: since 2.1.0 its socket has a listener of its own, which serves
+  # upgrades and nothing else, and publishes that port itself.
   ws-edge:
     image: caddy:2.11.2
     volumes:
       - ./docker/ws.Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
-      - "127.0.0.1:${SESSION_WS_PORT:-3001}:3001"
       - "127.0.0.1:${DM_WS_PORT:-3002}:3002"
     networks: [backend]
     restart: unless-stopped
@@ -120,14 +121,19 @@ services:
     restart: unless-stopped
 
   session:
-    # 2.0.1 boots with Gateway identity, but still wires mock outgoing clients.
-    # Full integration needs the owner's image with real HTTP clients.
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.0.1}
+    # Still wires mock outgoing clients: full integration needs the owner's
+    # image with real HTTP clients.
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.1.0}
     depends_on:
       session-db:
         condition: service_healthy
     environment:
+      # REST, reachable only through the Gateway: this port is not published.
       PORT: 3001
+      # WS /sessions/{id}/live, on a listener of its own. It serves protocol
+      # upgrades and answers 426 to anything else, so publishing it exposes
+      # the socket without exposing a single REST route.
+      WS_PORT: 3011
       SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
       DB_HOST: session-db
@@ -137,6 +143,8 @@ services:
       DB_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/session:/app/keys:ro
+    ports:
+      - "127.0.0.1:${SESSION_WS_PORT:-3011}:3011"
     networks: [session, backend]
     restart: unless-stopped
 

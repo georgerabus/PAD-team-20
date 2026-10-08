@@ -83,7 +83,7 @@ def main():
     parser.add_argument('--gateway-image', required=True)
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
-    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.0.1')
+    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.1.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0-rc.1')
     parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0-rc.1')
     parser.add_argument('--report', type=Path)
@@ -144,9 +144,12 @@ def main():
         try:
             config = json.loads(compose('config', '--format', 'json'))
             published = sorted(name for name, service in config['services'].items() if service.get('ports'))
-            check('only Gateway and WS edge publish ports', published, ['gateway', 'ws-edge'])
+            check('only Gateway, Session\'s socket and the WS edge publish ports',
+                  published, ['gateway', 'session', 'ws-edge'])
             check('Gateway publishes only its public listener',
                   [p['target'] for p in config['services']['gateway']['ports']], [8000])
+            check('Session publishes only its WebSocket listener',
+                  [p['target'] for p in config['services']['session']['ports']], [3011])
             check('Player calls Session through internal Gateway',
                   config['services']['player']['environment']['SESSION_BASE_URL'], 'http://gateway:8001/session')
             print('Starting disposable common Compose project...', flush=True)
@@ -174,9 +177,14 @@ def main():
                   call(public + '/player/players/' + str(uuid.uuid4()), headers={'X-Player-Id': str(uuid.uuid4())})[0], 401)
             check('public listener refuses internal session creation',
                   call(public + '/session/sessions', 'POST', {})[0], 403)
-            for port, path in ((ports[1], '/sessions/' + str(uuid.uuid4())), (ports[2], '/sessions/' + str(uuid.uuid4()) + '/channels')):
-                check(f'WS-only port {"Session" if port == ports[1] else "DM"} rejects ordinary REST',
-                      call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})[0], 404)
+            # Session's own listener answers 426 on anything that is not an
+            # upgrade; Caddy, standing in front of DM's shared port, answers 404.
+            for name, port, path, expected in (
+                ('Session', ports[1], '/sessions/' + str(uuid.uuid4()), 426),
+                ('DM', ports[2], '/sessions/' + str(uuid.uuid4()) + '/channels', 404),
+            ):
+                check(f'WS-only port {name} rejects ordinary REST',
+                      call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})[0], expected)
 
             accounts = []
             for role in ('moderator', 'junior'):
