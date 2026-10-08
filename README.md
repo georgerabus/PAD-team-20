@@ -14,7 +14,8 @@ A game set in a university Discord server where a moderation team decides who ge
 
 ## Service Boundaries
 
-The system is split into 8 microservices, each encapsulating one specific piece of functionality.
+The system has eight domain services and a Gateway that routes and authenticates
+REST requests. Each domain service owns its own data and business rules.
 
 ### 1. Player Service
 Responsible for the identity of the players. Stores accounts, authentication, profiles, friends and XP/Levels. Tracks persistent player progression through leveling, based on moderator experience, completed shifts and disciplinary actions.
@@ -52,7 +53,45 @@ Provides real-time communication between the moderator and the junior mods, over
 
 It transports messages and never judges whether what is said is correct.
 
+### 9. Gateway Service
+
+Python / FastAPI. Validates Player and Session tokens, forwards caller identity
+without Authorization, separates public and internal REST, and applies task
+timeout and concurrency limits. It owns no domain database. Its authenticated
+`POST /ws/negotiate` endpoint returns the direct Session or DM WebSocket URL.
+
 ## Architecture Diagram
+
+Lab 2 deployment topology (configured by common Compose):
+
+```mermaid
+flowchart LR
+    client[Client] -->|REST, published 8080| gateway[Gateway: public 8000 / internal 8001]
+    gateway --> player[(Player)]
+    gateway --> session[(Session)]
+    gateway --> applicant[(Applicant)]
+    gateway --> credential[(Credential)]
+    gateway --> rules[(Server Rules)]
+    gateway --> records[(University Record)]
+    gateway --> moderation[(Moderation)]
+    gateway --> dm[(Discord DMs)]
+    player -->|Internal REST via 8001| gateway
+    session -->|Internal REST via 8001, requires real clients| gateway
+    moderation -->|Internal REST via 8001| gateway
+    dm -->|Internal REST via 8001| gateway
+    client -->|WS upgrades only: 3001 / 3002| ws[WS edge]
+    ws --> session
+    ws --> dm
+```
+
+Only Gateway publishes REST. Session and DM still validate Session tokens at
+their WS handshakes; the WS edge rejects ordinary HTTP routes, so those ports
+cannot be used to forge Gateway identity. Gateway negotiates their public URLs
+using SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL. Read
+[integration status](docs/gateway-integration.md) for
+the image/client dependencies before treating this topology as a finished game.
+
+The original domain-interaction diagram remains useful for business ownership:
 
 ![Architecture Diagram](docs/images/diagram.png)
 
@@ -61,7 +100,8 @@ REST call, pointing from the caller to the service it calls. A dotted arrow is a
 asynchronous RabbitMQ event, labelled with its name and pointing from publisher
 to consumer.
 
-No service sits at the centre; each one calls only what it needs for its own job:
+Every solid REST arrow in this domain diagram goes through Gateway's internal
+listener in Lab 2. The domain responsibilities remain independent:
 
 - **Player** opens a session for a team, and hears back from Session through
   `SessionCompleted` to award progression.
@@ -134,6 +174,7 @@ contract, which is the one thing Lab 0 exists to force us to get right.
 | University Record | PHP / Laravel | PostgreSQL | REST, events both ways | Access-controlled ground-truth store; can start an applicant |
 | Moderation | TypeScript / NestJS | PostgreSQL | REST, consumes events | Decides and scores the admission from Applicant, Credential and Rules |
 | Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST | Real-time per-session chat |
+| Gateway | Python / FastAPI | None | REST, WS URL negotiation | Validates tokens, routes and limits requests |
 
 Three communication patterns are in use, each where it fits:
 
@@ -488,17 +529,17 @@ one is sound. It never decides whether the applicant gets in, and never checks a
 document against the university's records; catching a genuine document in the
 wrong hands is the players' job.
 
-**Session token validation.** Every document read carries a session token.
-Credential checks it locally, without calling Session or Player:
+**Gateway identity.** Clients send a session token to Gateway, which validates
+it, removes Authorization and injects identity headers. Credential validates
+the player/session UUIDs and session role (`401 INVALID_GATEWAY_IDENTITY` when
+missing or malformed), then enforces:
 
-1. The signature verifies against Session's public key and `exp` is in the
-   future. Otherwise `401 INVALID_TOKEN`.
-2. The token's `sessionId` equals the `sessionId` stored for the applicant (from
+1. The identity's `sessionId` equals the `sessionId` stored for the applicant (from
    `ApplicantInitialized`). Otherwise `403 SESSION_MISMATCH`.
-3. The token's `role` is `moderator`. Otherwise `403 ROLE_NOT_ALLOWED`. The
+2. The identity's `role` is `moderator`. Otherwise `403 ROLE_NOT_ALLOWED`. The
    documents are handed to the moderator; a junior mod sees one only when the
    moderator shares it into a channel, and then Discord DMs makes the call with
-   the moderator's token.
+   the moderator's forwarded identity through Gateway port 8001.
 
 | Method & path | Request | Response |
 |---|---|---|
@@ -758,72 +799,79 @@ server → client:
 
 ## Running the System
 
-Every service is published on Docker Hub and started together by
-`docker-compose.yml` at the root of this repository. Each service owns its own
-PostgreSQL database, which only that service can reach, and keeps its data in a
-named volume.
+The common `docker-compose.yml` starts Gateway, the eight domain services,
+their separate PostgreSQL databases and a WS-only edge. Domain REST ports and
+all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
+the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
+`/records`, `/moderation`, `/dm`.
+
+**This integration branch is not yet a completed Lab 2 deployment.** Required
+Gateway-compatible Rules/Records image references must be supplied. Session
+`2.0.1` still wires mock outgoing clients, and real event delivery is not
+implemented in Applicant/Credential. See
+[integration status and verification](docs/gateway-integration.md).
 
 ### What you need
 
-- **Docker**, with Compose
-- **OpenSSL**, once, to generate the token signing keys
+- Docker with Compose
+- OpenSSL, to generate the Player and Session signing keys
+- Explicit published image references for Gateway, Server Rules and University
+  Record, plus a Session image with real outgoing clients for the full flow
 
 ### Setup
 
 ```bash
-# 1. Configuration: copy the template and fill in every value. Each one is a
-#    secret, so the .env file is gitignored and never committed.
-cp .env.example .env
-openssl rand -hex 32        # run once per value in .env
+# Preserve an existing .env. Fill passwords, issuer secret, Laravel app keys
+# and the required published image references from .env.example.
+test -f .env || cp .env.example .env
 
-# 2. Signing keys for the two token issuers, Player and Session
 mkdir -p keys/player keys/session
-openssl genrsa -out keys/player/private.pem 2048
-openssl rsa -in keys/player/private.pem -pubout -out keys/player/public.pem
-openssl genrsa -out keys/session/private.pem 2048
-openssl rsa -in keys/session/private.pem -pubout -out keys/session/public.pem
-# The containers run as another user than you, so they must be able to read the keys
+# Generate only new pairs. If a pair is incomplete, recover the missing file
+# before starting; do not replace an established issuer's private key.
+for issuer in player session; do
+  if [ ! -e "keys/$issuer/private.pem" ] && [ ! -e "keys/$issuer/public.pem" ]; then
+    openssl genrsa -out "keys/$issuer/private.pem" 2048
+    openssl rsa -in "keys/$issuer/private.pem" -pubout -out "keys/$issuer/public.pem"
+  fi
+done
 chmod 644 keys/*/private.pem
 
-# 3. Start everything
+# Validate references and settings, then pull the exact configured images.
+docker compose config --quiet
+docker compose pull
 docker compose up -d
+docker compose ps
+curl -i http://127.0.0.1:8080/up
 ```
 
-Compose refuses to start while any value in `.env` is still empty. Session
-receives Player's **public** key only, which is what lets it validate player
-tokens locally without ever calling Player.
+The key-generation commands are first-time setup; do not overwrite an existing
+issuer key pair on an established deployment. Only Player gets Player's private
+key, and only Session gets Session's private key. Gateway receives public keys;
+Discord DMs receives Session's public key for its WS handshake.
 
-Each database runs its own `db/<service>/schema.sql` the first time its volume
-is empty. To start from an empty database, remove the volumes:
-`docker compose down -v`.
+`GATEWAY_HTTP_PORT` changes the published REST port; 8080 is the default, avoiding
+other local applications on 8000. `SESSION_WS_PORT` and `DM_WS_PORT` default to
+3001 and 3002. Ordinary HTTP requests on those WS-only listeners return 404.
+All published ports bind to loopback for the local presentation.
 
-Player answers on `http://localhost:3000` and Session on
-`http://localhost:3001`. The Postman collections under `postman/` exercise the
-endpoints. For the Player/Session collection, set `serviceSecret` to the
-`SERVICE_SECRET` from your `.env`.
+Services call `http://gateway:8001/<prefix>/...`. Port 8001 is never published
+on the host. Gateway upstreams use the container ports: DM and Moderation are
+both on port 3000, regardless of their former host ports.
 
-The combined Server Rules and University Record collection targets the local Laravel
-lab mocks on ports 8001 and 8002. It uses public fixture tokens instead of
-`SERVICE_SECRET`. Import `postman/server-rules-and-university-record.postman_collection.json` into Postman and run the
-whole collection in its original order; validation and access errors are expected in negative tests.
-Those two services still authenticate against fixtures rather than validating
-real session tokens, and consume a mocked `ApplicantInitialized` rather than a
-published event, so wiring them to the rest is integration work still to come.
+PostgreSQL initializes the Node services' schemas from `db/<service>` on an
+empty volume. Applicant/Credential use Laravel migrations at startup and need
+no APP_KEY because they are JSON APIs with no cookie/session encryption.
+Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named
+volumes retain data; `docker compose down -v` deletes this deployment's data.
 
-Applicant answers on `http://127.0.0.1:8003` and Credential on
-`http://127.0.0.1:8004`. Both are Laravel services on `php:8.4-apache`; Laravel
-migrations create their tables when the container starts, and neither needs an
-`APP_KEY`, since they are JSON APIs with no cookies or sessions. Besides
-`SERVICE_SECRET`, Applicant needs `APPLICANT_DB_PASSWORD`, and Credential needs
-`CREDENTIAL_DB_PASSWORD` and `CREDENTIAL_ISSUER_SECRET`, the key it signs
-documents with. Both validate real session tokens locally against
-`keys/session/public.pem`. Import
-`postman/applicant-and-credential.postman_collection.json`, set `serviceSecret`
-to the `SERVICE_SECRET` from your `.env` and run it in order with Player and
-Session up: it opens a real session, then exercises every Applicant and
-Credential endpoint and error. Until a broker is added, `ApplicantInitialized`
-is written to each service's log in the event envelope, and
-`php artisan events:handle` consumes one from a file or stdin.
+The existing Postman collections were written for earlier direct-service
+setups and have not all been migrated. Run the new
+`tests/verify_compose_gateway.py` for the current boundary/flow checks; do not
+use the old collections' historical success as evidence for this deployment.
+The test starts its own fresh Compose project and removes only its temporary
+resources. It uses a manual document fixture solely for REST sharing and
+separately checks automatic propagation, so missing event delivery remains a
+failure.
 
 ### Images
 
@@ -837,6 +885,7 @@ is written to each service's log in the event envelope, and
 | University Record | [`loredanaaaa/university-record-service`](https://hub.docker.com/r/loredanaaaa/university-record-service) |
 | Applicant | [`georgerabus/pad-applicant-service`](https://hub.docker.com/r/georgerabus/pad-applicant-service) |
 | Credential | [`georgerabus/pad-credential-service`](https://hub.docker.com/r/georgerabus/pad-credential-service) |
+| Gateway | Set `GATEWAY_IMAGE` to the confirmed repository and tag published by its CI; publication is pending |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact

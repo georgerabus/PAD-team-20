@@ -1,0 +1,193 @@
+# Common Gateway integration
+
+Verified on 8 October 2026. This is the integration work on
+`feat/gateway-service-integration`, based on CPR `dev` at `9c41b8a`. It has not
+been merged into the common repository. Container startup and functioning
+authentication do not establish that the full Lab 2 game is ready.
+
+## Scope and ownership
+
+This file and the JSON check report are supporting notes added for verification;
+the Lab 2 PDF does not prescribe these filenames or this test suite.
+It explicitly requires a Gateway README and an updated architecture diagram.
+The common repository also requires a verification summary and board reference
+in each PR. Test counts are diagnostics, not laboratory grades.
+
+George took common Compose integration: add Gateway, configure connections,
+select the owners' published image tags and test the deployment. Each teammate
+still implements their own service changes and their agreed Gateway part:
+
+| Owner | Individual services |
+|---|---|
+| George | Applicant and Credential |
+| Cătălina | Player and Session |
+| Loredana | Server Rules and University Record |
+| Augustin | Discord DMs and Moderation |
+
+The deployment entry and image configuration belong to George's Gateway Part
+1. Authorization is Part 2 and limits/CI Part 3; their merged implementations
+are reused. Part 4 owns WS negotiation and the final whole-system integration
+check. Providing deployment configuration or diagnostic results does not
+transfer that final integration work to George. The WS negotiation implementation
+is already merged in Gateway PR #6, authored by Loredana.
+
+Failures below identify separate service work or dependencies; they do not
+transfer that implementation to the Compose author. Event delivery is a game
+integration concern outside the HTTP-only Gateway routing check. The PDF does
+not explicitly require RabbitMQ; shared transport choices need team agreement.
+
+## What this change delivers
+
+The common Compose starts Gateway, all eight domain services, eight separate
+PostgreSQL databases and a WS-only Caddy edge. Client REST enters Gateway at
+`http://127.0.0.1:8080`; its internal listener, port 8001, stays private. No
+domain REST or database port is published.
+
+Database health checks use TCP on 127.0.0.1. PostgreSQL's initialization server
+accepts only local socket connections; checking that socket marked a fresh DB
+healthy too early and caused University Record's startup migration to fail
+with Connection refused. Waiting for TCP prevents that premature startup.
+
+Player calls Session through `http://gateway:8001/session`. DM's Session,
+Credential and University Record URLs, and Moderation's Applicant, Credential,
+Rules and Session URLs, also point through port 8001. Gateway's DM and
+Moderation upstreams use `dm-service:3000` and `moderation-service:3000`.
+
+Gateway receives only the public Player/Session signing keys. The private keys
+remain with their issuers. Applicant and Credential no longer receive a Session
+key or SERVICE_SECRET. Credential retains CREDENTIAL_ISSUER_SECRET for signing
+documents.
+
+Session and DM share their HTTP ports with WebSockets. Caddy publishes only
+upgrade requests to `/sessions/{id}/live` on 3001 and `/ws` on 3002; ordinary
+REST on those ports returns 404. Session/DM still validate their own WS
+handshakes. Gateway PR #6 implements authenticated `POST /ws/negotiate`.
+SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL tell it the externally
+reachable addresses; Compose points them to the WS-only edge.
+
+The three accessible submodules are pinned by this working tree to:
+
+| Service | Merged `dev` commit |
+|---|---|
+| Applicant | `3bc66c8c2d1f003389b9f022728209ddf5eac123` |
+| Credential | `d8c4f55950842ef8f1a6f6f6d2ead8a0a08902a2` |
+| Gateway | `a9e5a565d98dd892aba409778e3b99dc67b6d937` |
+
+The six other private source repositories could not be fetched with the
+available access. Their existing CPR pins are retained. Published images were
+inspected and exercised independently of access to those sources.
+
+## Images and remaining dependencies
+
+| Service | Published image checked | Result / requirement |
+|---|---|---|
+| Player | `catalinasiminiuc/pad-player-service:2.0.0` | Real Player → Gateway → Session flow passed |
+| Session | `catalinasiminiuc/pad-server-moderation-session-service:2.0.1` | Identity and WS work; outgoing clients still use mocks |
+| Discord DMs | `augustinploteanu/pad-dm-service:2.1.0` | Real Session access-check and Credential sharing passed |
+| Moderation | `augustinploteanu/pad-moderation-service:2.1.0` | Internal decision listing passed; full decision flow remains unverified |
+| Applicant | `georgerabus/pad-applicant-service:2.0.0-rc.1` | Published from the merged commit above; real create/read passed |
+| Credential | `georgerabus/pad-credential-service:2.0.0-rc.1` | Published from the merged commit above; identity, roles and sharing passed |
+| Server Rules | `loredanaaaa/server-rules-service:1.0.1` | Legacy bearer-token mock; incompatible with Gateway stripping Authorization |
+| University Record | `loredanaaaa/university-record-service:1.0.1` | Legacy bearer-token mock; incompatible with Gateway stripping Authorization |
+| Gateway | Local `pad-gateway-service:dev`, built from `a9e5a56` | Confirm a published repository and tag before team deployment |
+
+The two `2.0.0-rc.1` images are published for both linux/amd64 and linux/arm64.
+Their manifest digests are:
+
+- Applicant: `sha256:6255b7e8a2eafaedba0fb6a3044cf1911e3586c0c03beb3ae422723aa0a9e3c2`
+- Credential: `sha256:ca0dfa4cb6caa117750b05d8f4eb133b3a2a5802bcc760b49146489507671dcf`
+
+These candidate publications contain the authentication migration. They do not
+complete Applicant/Credential task limits, CI or real event delivery. Manual
+candidate publication does not prove the Lab 2 CI requirement.
+
+Gateway's merged workflow publishes on `master` and manual dispatch under
+`DOCKERHUB_USERNAME/pad-gateway-service`. Augustin said it uses his Docker Hub
+account; the account name in secrets and the resulting image still need a
+confirmed publication. The workflow's existence in `dev` is not evidence that
+an image was pushed. Keep the `master` trigger required for the release.
+
+`GATEWAY_IMAGE`, `SERVER_RULES_IMAGE` and `UNIVERSITY_RECORD_IMAGE` intentionally
+have no default in `.env.example`. Fill them with confirmed, compatible
+`repository:tag` references. The old Rules/Records tags are used only by the
+diagnostic test below. Session also needs an owner's image with real outgoing
+HTTP clients and its documented configuration; `2.0.1` has no real client
+implementation that can be enabled just by adding URLs to Compose.
+
+## Verification
+
+The machine-readable report is
+[`gateway-integration-checks.json`](gateway-integration-checks.json). The
+integration run passed **37 of 41 checks** with the published Applicant and
+Credential candidate images and the local Gateway image. Exit status 1 is the
+expected result while the four integration failures remain:
+
+| Check | Expected | Actual | Work needed |
+|---|---|---|---|
+| ApplicantInitialized automatically reaches Credential | 200 | 404 | Replace George's log-only EventPublisher / manual consumer with real delivery and test it |
+| Rules internal creation through Gateway | 201 | 503 | Loredana: publish Rules with Gateway identity and internal-route authentication |
+| University Record read through Gateway | 200 | 503 | Loredana: publish Records with Gateway identity and preserved access rules |
+| Session's next applicant exists in real Applicant | 200 | 404 | Cătălina: replace Session mock clients with real calls through Gateway |
+
+The successful checks include fresh registrations and a real team/session,
+public rejection of internal endpoints, rejection of forged identity without
+a token, Applicant reads for both roles, Credential's junior-role rejection,
+real DM access checks and sharing through internal Gateway, private port
+configuration, negotiated Session/DM URLs and WS handshakes at those returned
+addresses accepting real tokens and refusing invalid ones. Credential sharing
+uses a separately labelled manual event fixture;
+automatic propagation is tested independently and remains a failure.
+
+Gateway's `tests/verify_negotiation.py` passed all 15 checks on the rebuilt
+`a9e5a56` image. Gateway's `tests/verify_auth.py` and `tests/verify_limits.py` passed 19 and
+17 checks respectively against the rebuilt `04f82a8` image. Those results
+cover Gateway's limits, not the limits of all eight domain services.
+
+To reproduce the current diagnostic run from the CPR directory:
+
+```bash
+python3 tests/verify_compose_gateway.py \
+  --gateway-image pad-gateway-service:dev \
+  --rules-image loredanaaaa/server-rules-service:1.0.1 \
+  --records-image loredanaaaa/university-record-service:1.0.1 \
+  --report docs/gateway-integration-checks.json
+```
+
+Build that local Gateway image from its merged `dev` if it is not available:
+
+```bash
+docker buildx build --builder default --load \
+  -t pad-gateway-service:dev ./pad-gateway-service
+```
+
+After compatible images are published, rerun with their exact references using
+`--gateway-image`, `--rules-image`, `--records-image` and `--session-image`.
+The test generates temporary keys/passwords, picks loopback ports, starts a
+separate Compose project and removes that project's containers and volumes.
+It does not read or alter the project's `.env` or an existing deployment.
+It checks selected integration paths, not every endpoint or realtime event.
+
+## Team deployment and review
+
+Use the setup in the root README once the required images are available. Each
+DB password and CREDENTIAL_ISSUER_SECRET can be generated with
+`openssl rand -hex 32`. The Laravel Rules/Records APP_KEY values require
+`base64:` followed by `openssl rand -base64 32`. Keep `.env` and signing keys
+out of Git. The REST port is configurable by GATEWAY_HTTP_PORT; the default
+8080 avoids other local applications using 8000.
+
+The code changes currently exist only on the local CPR integration branch.
+Open a board issue for this integration and link it in a draft PR from
+`feat/gateway-service-integration` to `dev`. Ask the owners of affected
+services to review it. Supply and test the compatible images and complete the
+configuration supplied by their owners. Each owner completes their real
+clients/event handling in separate service tasks before the team presents
+this as a functioning game.
+After review and merge, colleagues fetch the common `dev` and pull its pinned
+images. Merging a private service PR or publishing an image does not update
+their common Compose automatically.
+
+Other Lab 2 work still needs its own evidence: all-service task limits,
+all-service CI publication, full realtime delivery, and a
+Postman/demo flow updated for Gateway. CPR `dev` goes into `master` only when
+the lab is ready to present, as required by the repository workflow.
