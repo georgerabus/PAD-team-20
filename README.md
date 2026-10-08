@@ -963,3 +963,13 @@ Review → Done**, one card per task, each card carrying the service it touches 
 the teammate who owns it. Pull requests reference the card they close (see
 [Pull request contents](#pull-request-contents)) so the board and the commit
 history stay in sync.
+
+### Lab 2 Gateway integration status
+
+See [Gateway WebSocket contract and readiness checklist](docs/gateway-websocket-contract.md)
+for the merged negotiation contract, confirmed Session and DM handshakes, pending dedicated listener
+releases, and the coordinated Compose/Postman migration. The
+[target topology source](docs/gateway-lab2.mmd) is a proposal; it does not describe
+the current Compose deployment.
+
+![Proposed Lab 2 Gateway topology — integration pending](docs/images/gateway-lab2-target.png)
