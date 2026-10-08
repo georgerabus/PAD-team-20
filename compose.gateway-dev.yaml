@@ -1,0 +1,30 @@
+# Gateway-only development overlay. This is NOT the final Grade 6 deployment:
+# existing published REST ports and service images remain unchanged.
+# docker compose -f docker-compose.yml -f compose.gateway-dev.yaml up -d --build gateway
+services:
+  gateway:
+    build:
+      context: ${GATEWAY_SOURCE_DIR:?Set GATEWAY_SOURCE_DIR to the gateway checkout containing PR 6}
+    image: pad-gateway-service:dev
+    environment:
+      GATEWAY_PORT: 8000
+      GATEWAY_INTERNAL_PORT: 8001
+      PLAYER_PUBLIC_KEY_PATH: /app/keys/player-public.pem
+      SESSION_PUBLIC_KEY_PATH: /app/keys/session-public.pem
+      PLAYER_BASE_URL: http://player:3000
+      SESSION_BASE_URL: http://session:3001
+      APPLICANT_BASE_URL: http://applicant:80
+      CREDENTIAL_BASE_URL: http://credential:80
+      RULES_BASE_URL: http://server-rules:80
+      RECORDS_BASE_URL: http://university-record:80
+      MODERATION_BASE_URL: http://moderation-service:3000
+      DM_BASE_URL: http://dm-service:3000
+      # Empty until the dedicated listeners/images are ready.
+      SESSION_PUBLIC_WS_BASE_URL: ${SESSION_PUBLIC_WS_BASE_URL:-}
+      DM_PUBLIC_WS_BASE_URL: ${DM_PUBLIC_WS_BASE_URL:-}
+    volumes:
+      - ./keys/player/public.pem:/app/keys/player-public.pem:ro
+      - ./keys/session/public.pem:/app/keys/session-public.pem:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [backend]
