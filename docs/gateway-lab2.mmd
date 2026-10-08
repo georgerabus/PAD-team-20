@@ -1,0 +1,17 @@
+flowchart LR
+  C[Client]
+  G[Gateway public HTTP 8000]
+  I[Gateway internal HTTP 8001 - unpublished]
+  R[Eight service REST listeners - unpublished]
+  S[Session dedicated WS listener - planned 3011]
+  D[DM dedicated WS listener - port pending]
+  DB[Separate private PostgreSQL database per service]
+  C -->|REST and POST /ws/negotiate| G
+  G -->|Validated identity headers, no Authorization| R
+  R -->|Service-to-service REST| I
+  I --> R
+  C -->|Direct WS, service validates session token| S
+  C -->|Direct WS with query token, listener pending| D
+  R --> DB
+  S --- N[Target topology: listener images and shared integration pending]
+  D --- N
