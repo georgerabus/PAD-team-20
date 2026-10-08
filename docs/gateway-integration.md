@@ -1,8 +1,8 @@
 # Common Gateway integration
 
 Verified on 8 October 2026. This is the integration work on
-`feat/gateway-service-integration`, based on CPR `dev` at `9c41b8a`. It has not
-been merged into the common repository. Container startup and functioning
+`feat/gateway-service-integration`, based on CPR `dev` at `9c41b8a`. That work is now merged into the common repository; the results below remain
+a historical run, not a new verification of Session 2.1.0. Container startup and functioning
 authentication do not establish that the full Lab 2 game is ready.
 
 ## Scope and ownership
@@ -178,7 +178,7 @@ DB password and CREDENTIAL_ISSUER_SECRET can be generated with
 out of Git. The REST port is configurable by GATEWAY_HTTP_PORT; the default
 8080 avoids other local applications using 8000.
 
-The code changes currently exist only on the local CPR integration branch.
+The original integration changes are now present in shared dev.
 Open a board issue for this integration and link it in a draft PR from
 `feat/gateway-service-integration` to `dev`. Ask the owners of affected
 services to review it. Supply and test the compatible images and complete the
@@ -193,3 +193,44 @@ Other Lab 2 work still needs its own evidence: all-service task limits,
 all-service CI publication, full realtime delivery, and a
 Postman/demo flow updated for Gateway. CPR `dev` goes into `master` only when
 the lab is ready to present, as required by the repository workflow.
+
+
+### Session 2.1.0 follow-up (9 October 2026)
+
+The image is published for both architectures and already selected by Compose.
+The historical 37/41 report above is not evidence for the new listener. Rerun
+`tests/verify_compose_gateway.py`; its Session checks now include Bearer transport,
+missing token and mismatched session, alongside query-token and plain-HTTP checks.
+No new runtime pass count is claimed. DM's Caddy edge remains unchanged, pending
+agreement on the difference from the planned service-owned dedicated listener.
+
+
+### User-run follow-up: 43/45 checks passed (9 October 2026)
+
+The user reran the updated diagnostic with local images
+`loredanaaaa/server-rules-service:2.0.0-rc.1` and
+`loredanaaaa/university-record-service:2.0.0-rc.1`, local
+`pad-gateway-service:dev`, and published Session 2.1.0.
+This is a user-supplied console result, not a regenerated JSON report.
+The historical JSON and 37/41 run above have not been overwritten.
+
+Rules internal creation now returns 201; Records reference read with Gateway
+identity returns 200. Session query-token and Bearer handshakes return 101;
+missing/invalid tokens return 401 and mismatched session returns 403.
+Session plain HTTP returns 426; DM edge plain HTTP returns 404.
+
+Two checks remain failing with 404:
+- ApplicantInitialized automatically reaches Credential (George's event delivery).
+- Session next-applicant exists in real Applicant (Session outgoing integration).
+
+Both candidate Rules/Records images are local builds only. No multi-platform
+publication is claimed. Their service suites passed locally: Rules 18 tests /
+126 assertions; Records 26 tests / 181 assertions. Fixture-based tests do not
+establish real University Record event ingestion. All-service limits, CI and
+complete game/realtime flows still need their own implementation and evidence.
+
+The runner now downloads missing images before starting the readiness timer,
+shows Docker progress, and allows 300 seconds for Compose readiness (600-second
+outer process limit). Cached images are reused; the local Gateway image must
+already exist. The earlier 180-second startup timeout is not counted as a
+service assertion failure.
