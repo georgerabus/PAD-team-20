@@ -211,11 +211,29 @@ header used before the Gateway existed.
 
 A service-to-service call carries no token and no `X-Player-Id`: the caller is
 a service, not a person, and the token was already consumed at the Gateway on
-the way in. The Gateway accepts these calls because they come from inside the
-system and refuses the same paths from outside, so what a request may do
-depends on where it entered, not on a secret each service checks. The trade-off
-is deliberate: anything already inside the system is trusted, which is the
-consequence of having a single authentication boundary.
+the way in.
+
+**Which door a request arrives at is what decides this.** The Gateway listens
+on two ports:
+
+| Port | Published outside | Serves |
+|---|---|---|
+| `8000` | yes | everything except endpoints marked *internal* |
+| `8001` | no | everything, including internal endpoints |
+
+A client can only reach `8000`, where an internal path answers
+`403 INTERNAL_ENDPOINT`. Services reach `8001`, which is not published beyond
+the Docker network, and call each other there:
+
+```
+http://gateway:8001/<service>/<path>
+```
+
+So `POST /sessions` becomes `POST http://gateway:8001/session/sessions` when
+Player opens a shift. What a request may do depends on where it entered, not on
+a secret each service checks. The trade-off is deliberate: anything already
+inside the system is trusted, which is the consequence of having a single
+authentication boundary.
 
 **WebSockets are the exception.** The Gateway negotiates the connection and
 hands the client a URL to reach the service directly, so it is not left sitting
