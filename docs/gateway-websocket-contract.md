@@ -1,8 +1,9 @@
 # Gateway WebSocket contract and integration readiness
 
 This document distinguishes the merged Gateway negotiation endpoint from pending
-shared deployment work. It does not claim that the current Compose stack meets
-Lab 2 routing requirements.
+shared deployment work. The routing itself is now in place and checked; what is
+still missing is a published Gateway image and two Gateway-compatible service
+images, without which nobody can start the stack. See Status at the end.
 
 ## Negotiation (merged Gateway PR #6)
 
@@ -38,20 +39,22 @@ because this connection bypasses Gateway; this is the explicit WS authentication
 exception. The owner reports pre-upgrade rejection for missing token (401),
 session mismatch (403) and connection limit (429).
 
-PLANNED, NOT VERIFIED IN THE SHARED DEPLOYMENT: separate WS listener on 3011,
-plain HTTP returns 426 without reaching Express, REST remains private on 3001.
-The owner reports the listener is implemented and tested locally, but not yet
-merged/published. The planned image is
-`catalinasiminiuc/pad-server-moderation-session-service:2.1.0`;
-`2.0.1` does not contain the separate listener. Availability has not been verified.
-After the owner confirms the merged change and published image, configure:
+CONFIRMED AND PUBLISHED: the separate WS listener is on 3011 in
+`catalinasiminiuc/pad-server-moderation-session-service:2.1.0`, which is on
+Docker Hub for amd64 and arm64. Plain HTTP to that port returns
+`426 UPGRADE_REQUIRED` without reaching Express, and REST stays private on
+3001, which Compose does not publish. `2.0.1` does **not** contain the
+listener, so a deployment pinned to it must keep proxying the socket instead.
+
+Common Compose publishes 3011 from the `session` service itself and configures:
 
 ```dotenv
-SESSION_PUBLIC_WS_BASE_URL=ws://localhost:3011
+SESSION_PUBLIC_WS_BASE_URL=ws://127.0.0.1:3011
 ```
 
-Publish only the dedicated WS listener. Do not change the current image's port
-mapping before confirming it implements that listener.
+Verified in the shared deployment by `tests/verify_compose_gateway.py`:
+negotiation returns that URL, the handshake answers `101` with a real session
+token and `401` with an invalid one, and ordinary REST on 3011 answers `426`.
 
 ## DM confirmed handshake; separate listener not implemented
 
@@ -116,8 +119,20 @@ secrets. These require coordinated service/image updates, not just URL edits.
    HTTP rejection behaviour on its dedicated listener. Check REST service ports
    are unreachable from the host. Verify timeout/concurrency errors separately.
 
-Gateway-only Docker checks passed on the user's machine: verify_negotiation.py,
-verify_auth.py, verify_limits.py. Full-stack checks above remain pending.
+Status. Gateway-only Docker checks pass: verify_negotiation.py,
+verify_auth.py, verify_limits.py. Items 2 and 3 landed with the common Compose
+change (#30); items 4, 5 and 6 landed with the Session listener and Postman
+migration, and `tests/verify_compose_gateway.py` checks them against a real
+stack: negotiation, a `101` handshake with a real session token, `401` with an
+invalid one, `426` on Session's WS port, `404` on the DM edge, and no REST
+service port reachable from the host.
+
+Item 1 is still open, and it is what blocks everyone else from running this:
+**the Gateway image is not on Docker Hub**, so `GATEWAY_IMAGE` has no value and
+Compose cannot start. The checks above were run against a Gateway built locally
+from the gateway repository's `dev`. Server Rules and University Record are
+also still on `1.0.1`, which require bearer tokens and cannot run behind the
+Gateway.
 
 The proposed topology source is gateway-lab2.mmd. It describes the target design,
 not the currently running Compose stack; the existing architecture PNG is unchanged.

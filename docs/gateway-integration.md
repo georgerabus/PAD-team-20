@@ -58,12 +58,14 @@ remain with their issuers. Applicant and Credential no longer receive a Session
 key or SERVICE_SECRET. Credential retains CREDENTIAL_ISSUER_SECRET for signing
 documents.
 
-Session and DM share their HTTP ports with WebSockets. Caddy publishes only
-upgrade requests to `/sessions/{id}/live` on 3001 and `/ws` on 3002; ordinary
-REST on those ports returns 404. Session/DM still validate their own WS
-handshakes. Gateway PR #6 implements authenticated `POST /ws/negotiate`.
-SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL tell it the externally
-reachable addresses; Compose points them to the WS-only edge.
+Session serves its WebSocket on a listener of its own since 2.1.0, published
+as 3011: it handles upgrades and answers `426` to ordinary HTTP, which never
+reaches a route. DM still shares one port with its REST routes, so Caddy
+publishes only its `/ws` upgrades on 3002 and returns 404 for the rest.
+Session and DM still validate their own WS handshakes. Gateway PR #6
+implements authenticated `POST /ws/negotiate`. SESSION_PUBLIC_WS_BASE_URL and
+DM_PUBLIC_WS_BASE_URL tell it the externally reachable addresses; Compose
+points the first at Session itself and the second at the WS-only edge.
 
 The three accessible submodules are pinned by this working tree to:
 
