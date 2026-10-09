@@ -51,7 +51,7 @@ def decode(body):
 
 
 def redact_diagnostics(text):
-    # Caddy can include the handshake URI in error logs. Never print session JWTs.
+    # Service logs can include the handshake URI. Never print session JWTs.
     text = re.sub(r'[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}', '[REDACTED_JWT]', text)
     text = re.sub(r'(?i)(token=)[^&\s"\\]+', r'\1[REDACTED]', text)
     return text
@@ -155,12 +155,14 @@ def main():
         try:
             config = json.loads(compose('config', '--format', 'json'))
             published = sorted(name for name, service in config['services'].items() if service.get('ports'))
-            check('only Gateway, Session\'s socket and the WS edge publish ports',
-                  published, ['gateway', 'session', 'ws-edge'])
+            check('only Gateway and the Session and DM sockets publish ports',
+                  published, ['dm-service', 'gateway', 'session'])
             check('Gateway publishes only its public listener',
                   [p['target'] for p in config['services']['gateway']['ports']], [8000])
             check('Session publishes only its WebSocket listener',
                   [p['target'] for p in config['services']['session']['ports']], [3011])
+            check('DM publishes only its WebSocket listener',
+                  [p['target'] for p in config['services']['dm-service']['ports']], [3001])
             check('Player calls Session through internal Gateway',
                   config['services']['player']['environment']['SESSION_BASE_URL'], 'http://gateway:8001/session')
             # Pull missing images separately: downloads must not consume the
@@ -199,11 +201,11 @@ def main():
                   call(public + '/player/players/' + str(uuid.uuid4()), headers={'X-Player-Id': str(uuid.uuid4())})[0], 401)
             check('public listener refuses internal session creation',
                   call(public + '/session/sessions', 'POST', {})[0], 403)
-            # Session's own listener answers 426 on anything that is not an
-            # upgrade; Caddy, standing in front of DM's shared port, answers 404.
+            # Session's and DM's own WebSocket listeners answer 426 on anything
+            # that is not an upgrade.
             for name, port, path, expected in (
                 ('Session', ports[1], '/sessions/' + str(uuid.uuid4()), 426),
-                ('DM', ports[2], '/sessions/' + str(uuid.uuid4()) + '/channels', 404),
+                ('DM', ports[2], '/sessions/' + str(uuid.uuid4()) + '/channels', 426),
             ):
                 check(f'WS-only port {name} rejects ordinary REST',
                       call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})[0], expected)
@@ -264,7 +266,7 @@ def main():
                 print('--- DM WebSocket diagnostics (tokens redacted) ---', flush=True)
                 # Collect before cleanup; keep the original failed checks unchanged.
                 try:
-                    for service in ('ws-edge', 'dm-service'):
+                    for service in ('dm-service',):
                         print(redact_diagnostics(compose('logs', '--no-color', '--tail', '35', service)), flush=True)
                         image = config['services'][service]['image']
                         image_id = run(['docker', 'image', 'inspect', '--format', '{{.Id}}', image])
@@ -338,7 +340,6 @@ def main():
         'player': config['services']['player']['image'],
         'dm': config['services']['dm-service']['image'],
         'moderation': config['services']['moderation-service']['image'],
-        'ws_edge': config['services']['ws-edge']['image'],
     }, 'checks': checks}
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

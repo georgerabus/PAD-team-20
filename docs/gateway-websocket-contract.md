@@ -50,7 +50,7 @@ The integration test defaults to 2.1.0 and checks plain HTTP rejection, query an
 Bearer handshakes, missing/invalid tokens and session mismatch. These new checks
 have not yet been executed here; previous results with 2.0.1 are historical.
 
-## DM confirmed handshake; separate listener not implemented
+## DM confirmed handshake and dedicated listener (2.2.0)
 
 Augustin confirms `/ws?sessionId=<UUID>&token=<session JWT>`. The token is
 mandatory in the query string; do not assume Bearer headers are supported for DM.
@@ -71,20 +71,21 @@ const socket = new WebSocket(socketUrl);
 Do not log the resulting URL or store real tokens in exported Postman collections.
 This example also works for Session's confirmed query-token transport.
 
-BLOCKED FOR FINAL DEPLOYMENT: DM currently shares REST and WS on container port
-3000 (host 3002 in the inspected Compose). A dedicated WS listener is not yet
-implemented. Augustin must provide its port and published image tag after the
-change. Separating the listener is DM owner's work, not a Gateway workaround.
-Leave DM_PUBLIC_WS_BASE_URL unconfigured in the proposed final deployment until
-those values are confirmed; negotiation then returns 503 WS_UNAVAILABLE for DM.
-Do not publish the shared REST/WS listener as the final Lab 2 arrangement.
+Since `augustinploteanu/pad-dm-service:2.2.0` the socket has a listener of its
+own on container port 3001 (`WS_PORT`), separate from REST on 3000. It serves
+WebSocket upgrades to `/ws` and nothing else: ordinary HTTP gets
+`426 UPGRADE_REQUIRED`, an upgrade to another path `404`. The REST port refuses
+upgrades with `404`, and REST stays reachable only through the Gateway. Compose
+publishes the listener as `DM_WS_PORT` (3002 by default), which is what
+`DM_PUBLIC_WS_BASE_URL` points at; the Caddy edge that stood in front of DM's
+shared port is removed.
 
 ## Remaining owner deliverables
 
 | Owner | Required before shared runtime verification |
 |---|---|
 | Session | Published 2.1.0; rerun dedicated-listener checks and resolve real outgoing-client integration |
-| DM | Implement a WS-only listener, confirm plain-HTTP rejection behaviour, port and published image tag |
+| DM | Done in 2.2.0: WS-only listener on container port 3001, `426` to ordinary HTTP, published as `DM_WS_PORT` |
 | Gateway/shared stack | Confirm released Gateway image includes PR #6; wire Compose and migrate callers together |
 
 No negotiation endpoint code change is required by the confirmed handshake paths.
@@ -180,11 +181,8 @@ GATEWAY_SOURCE_DIR to the existing Gateway checkout. Both are needed because
 Compose interpolates the base file before merging. Other required image/secret
 values must also be supplied for full configuration validation.
 
-DM currently uses a Caddy WS-only edge in the teammate's merged configuration.
-This prevents ordinary REST publication but is not the previously agreed native
-separate-listener implementation. It is retained unchanged pending team review;
-do not claim DM has implemented its own separate listener. Earlier recommendations
-to leave DM base empty describe the proposed native-listener deployment only.
+DM publishes its own WS-only listener since 2.2.0, as Session does; the Caddy
+edge used before it is removed from Compose.
 
 Run Postman with gatewayBaseUrl=http://127.0.0.1:8080 (or GATEWAY_HTTP_PORT).
 Only use the unconfigured-WS test folder when the corresponding bases really
