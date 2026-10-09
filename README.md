@@ -885,7 +885,14 @@ Run it from the host instead and the client story still runs against
 `http://127.0.0.1:8080`, but those five requests cannot reach the internal
 listener and fail, along with the assertions that depend on them.
 
-The other collections were written for earlier direct-service setups and have
+`postman/applicant-and-credential.postman_collection.json` follows the same
+rules and runs the same way, under its own file name. It opens a real session
+through Player and Session, then covers every Applicant and Credential
+endpoint: the internal ones on `gateway:8001`, the players' reads with a
+session token, and a folder of its own checking that identity headers the
+caller sets and internal paths are refused on the published port.
+
+The remaining collections were written for earlier direct-service setups and have
 not all been migrated. Run `tests/verify_compose_gateway.py` for the full
 boundary and flow checks; do not use the old collections' historical success as
 evidence for this deployment.
