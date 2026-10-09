@@ -235,3 +235,47 @@ shows Docker progress, and allows 300 seconds for Compose readiness (600-second
 outer process limit). Cached images are reused; the local Gateway image must
 already exist. The earlier 180-second startup timeout is not counted as a
 service assertion failure.
+
+
+### Candidate publication verified (9 October 2026)
+
+Docker Hub now lists both Gateway-compatible candidates for linux/amd64 and
+linux/arm64. `.env.example` selects these versions; existing private `.env` files
+must be updated by their owners. This supersedes the earlier local-only status.
+
+- `loredanaaaa/server-rules-service:2.0.0-rc.1`:
+  `sha256:12f7b512a738625e0622874bd6e413814be8f2afe8cf61076130949f18958077`
+- `loredanaaaa/university-record-service:2.0.0-rc.1`:
+  `sha256:8dbbbf4db814e9696830d216aee13ecfb4a56b10dcfa2e88c19834ccd6e44ed8`
+
+Manifest availability is verified, not ARM64 execution. The 43/45 result used
+local candidates before publication; the published-image follow-up result is recorded below. Publication was
+manual, not evidence of automatic CI publication on merge.
+
+
+### Published-candidate runtime follow-up (user-run, 9 October 2026)
+
+After the instructed pulls of both published 2.0.0-rc.1 candidates, the user
+reported 43/45 checks passed again. Rules internal creation returned 201 and
+Records Gateway identity read returned 200. The same two 404 failures remain:
+automatic ApplicantInitialized delivery to Credential, and the real Applicant
+lookup for Session's next-applicant result. Gateway was still the local dev image.
+This is the user's Windows Docker linux/amd64 run; ARM64 runtime was not tested.
+The console summary is recorded here without replacing the historical JSON report.
+
+
+### CI-published request-limit candidates with Session 2.2.0 (user-run)
+
+The user confirmed successful test and publish jobs on main for both services,
+then pulled and tested server-rules-service:2.0.0-rc.2 and
+university-record-service:2.0.0-rc.2 with Session 2.2.0. The shared integration
+result was 44/45. Rules internal creation returned 201, Records identity read
+returned 200, and Session next-applicant was present in Applicant (200).
+Session and DM WebSocket checks passed. The only failing check in this suite
+was automatic ApplicantInitialized delivery to Credential (404).
+
+Gateway still used the local pad-gateway-service:dev image. This is not yet
+validation of an entirely registry-pulled stack or proof of complete Lab 2
+business logic. The suite does not establish all event flows. Runtime tests
+were linux/amd64; ARM64 runtime has not been tested. Existing private .env
+files must be updated separately; .env.example now selects both rc.2 images.

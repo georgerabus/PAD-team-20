@@ -10,6 +10,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import json
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -47,6 +48,13 @@ def decode(body):
         return json.loads(body)
     except (ValueError, TypeError):
         return body
+
+
+def redact_diagnostics(text):
+    # Caddy can include the handshake URI in error logs. Never print session JWTs.
+    text = re.sub(r'[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}', '[REDACTED_JWT]', text)
+    text = re.sub(r'(?i)(token=)[^&\s"\\]+', r'\1[REDACTED]', text)
+    return text
 
 
 def call(url, method='GET', body=None, headers=None):
@@ -249,9 +257,21 @@ def main():
                   websocket_status(session_ws.port, session_ws.path), 401)
             check('Session WS rejects a mismatched session',
                   websocket_status(session_ws.port, f'/sessions/{uuid.uuid4()}/live', session['sessionToken']), 403)
-            check('DM WS validates the same session token',
+            dm_valid = check('DM WS validates the same session token',
                   websocket_status(dm_ws.port, dm_ws.path + '?' + dm_ws.query + '&token=' + session['sessionToken']), 101)
-            check('DM WS rejects an invalid token', websocket_status(ports[2], f'/ws?sessionId={session_id}&token=invalid'), 401)
+            dm_invalid = check('DM WS rejects an invalid token', websocket_status(ports[2], f'/ws?sessionId={session_id}&token=invalid'), 401)
+            if not (dm_valid and dm_invalid):
+                print('--- DM WebSocket diagnostics (tokens redacted) ---', flush=True)
+                # Collect before cleanup; keep the original failed checks unchanged.
+                try:
+                    for service in ('ws-edge', 'dm-service'):
+                        print(redact_diagnostics(compose('logs', '--no-color', '--tail', '35', service)), flush=True)
+                        image = config['services'][service]['image']
+                        image_id = run(['docker', 'image', 'inspect', '--format', '{{.Id}}', image])
+                        print(f'{service}: {image} ({image_id})', flush=True)
+                except (RuntimeError, subprocess.TimeoutExpired) as error:
+                    print('Diagnostics unavailable: ' + redact_diagnostics(str(error)), flush=True)
+                print('--- End DM WebSocket diagnostics ---', flush=True)
 
             status, applicant = internal('/applicant/applicants', 'POST', {'sessionId': session_id})
             check('internal Gateway creates a real Applicant', status, 201)
