@@ -34,11 +34,12 @@ with response: print(json.dumps([response.status,response.read().decode()]))
 """
 
 
-def run(command, input=None, timeout=180):
-    result = subprocess.run(command, input=input, text=True, capture_output=True, timeout=timeout)
+def run(command, input=None, timeout=180, live=False):
+    result = subprocess.run(command, input=input, text=True, capture_output=not live, timeout=timeout)
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-    return result.stdout.strip()
+        raise RuntimeError((result.stderr or "").strip() or (result.stdout or "").strip()
+                           or f"Command failed with exit code {result.returncode}; see output above.")
+    return (result.stdout or "").strip()
 
 
 def decode(body):
@@ -68,12 +69,14 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def websocket_status(port, path):
+def websocket_status(port, path, token=None):
     with socket.create_connection(('127.0.0.1', port), timeout=10) as sock:
         key = base64.b64encode(secrets.token_bytes(16)).decode()
+        authorization = '' if token is None else f'Authorization: Bearer {token}\r\n'
         request = (f'GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
                    'Upgrade: websocket\r\nConnection: Upgrade\r\n'
-                   f'Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n')
+                   f'Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n'
+                   f'{authorization}\r\n')
         sock.sendall(request.encode())
         return int(sock.recv(4096).split(b'\r\n', 1)[0].split()[1])
 
@@ -129,8 +132,8 @@ def main():
         command = ['docker', 'compose', '--project-directory', str(ROOT), '--env-file', str(env_file),
                    '-f', str(ROOT / 'docker-compose.yml'), '-p', project]
 
-        def compose(*parts, input=None):
-            return run([*command, *parts], input=input)
+        def compose(*parts, input=None, timeout=180, live=False):
+            return run([*command, *parts], input=input, timeout=timeout, live=live)
 
         def internal(path, method='GET', body=None, headers=None):
             headers = dict(headers or {})
@@ -152,15 +155,26 @@ def main():
                   [p['target'] for p in config['services']['session']['ports']], [3011])
             check('Player calls Session through internal Gateway',
                   config['services']['player']['environment']['SESSION_BASE_URL'], 'http://gateway:8001/session')
-            print('Starting disposable common Compose project...', flush=True)
+            # Pull missing images separately: downloads must not consume the
+            # service readiness deadline. Never pull over a local Gateway build.
+            for image in sorted({service['image'] for service in config['services'].values()}):
+                present = subprocess.run(['docker', 'image', 'inspect', image],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                if present.returncode:
+                    if image == args.gateway_image:
+                        raise RuntimeError(f'Gateway image {image} is missing locally. Build or pull it first.')
+                    print(f'Downloading missing image: {image}', flush=True)
+                    run(['docker', 'pull', image], timeout=900, live=True)
+            print('Starting disposable common Compose project (readiness limit: 300 seconds)...', flush=True)
             try:
-                compose('up', '-d', '--wait', '--wait-timeout', '120')
-            except RuntimeError:
+                compose('up', '-d', '--pull', 'never', '--wait', '--wait-timeout', '300',
+                        timeout=600, live=True)
+            except (RuntimeError, subprocess.TimeoutExpired):
                 # Preserve startup diagnostics before disposable resources are
                 # removed. Startup logs contain no test accounts or tokens.
                 for row in compose('ps', '--all', '--format', 'json').splitlines():
                     container = json.loads(row)
-                    if container['State'] == 'exited':
+                    if container['State'] != 'running' or container.get('Health') == 'unhealthy':
                         service = container['Service']
                         print(compose('logs', '--no-color', '--tail', '35', service), flush=True)
                 raise
@@ -229,6 +243,12 @@ def main():
                   websocket_status(session_ws.port, session_ws.path + '?token=' + session['sessionToken']), 101)
             check('Session WS rejects an invalid token',
                   websocket_status(ports[1], f'/sessions/{session_id}/live?token=invalid'), 401)
+            check('Session WS accepts Bearer transport',
+                  websocket_status(session_ws.port, session_ws.path, session['sessionToken']), 101)
+            check('Session WS rejects a missing token',
+                  websocket_status(session_ws.port, session_ws.path), 401)
+            check('Session WS rejects a mismatched session',
+                  websocket_status(session_ws.port, f'/sessions/{uuid.uuid4()}/live', session['sessionToken']), 403)
             check('DM WS validates the same session token',
                   websocket_status(dm_ws.port, dm_ws.path + '?' + dm_ws.query + '&token=' + session['sessionToken']), 101)
             check('DM WS rejects an invalid token', websocket_status(ports[2], f'/ws?sessionId={session_id}&token=invalid'), 401)

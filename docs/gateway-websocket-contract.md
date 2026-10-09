@@ -31,30 +31,24 @@ SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL are client-visible ws/wss
 base URLs, separate from Docker-internal REST upstream URLs. localhost values
 are only suitable when the client runs on the Docker host.
 
-## Session owner confirmation and pending deployment
+## Session 2.1.0: published and configured; local verification pending
 
-Confirmed handshake path: /sessions/{sessionId}/live. Token transport is either
-?token=<jwt> or Authorization: Bearer <jwt>. Session verifies the token itself
-because this connection bypasses Gateway; this is the explicit WS authentication
-exception. The owner reports pre-upgrade rejection for missing token (401),
-session mismatch (403) and connection limit (429).
+Owner-confirmed handshake: `/sessions/{sessionId}/live`, with either
+`?token=<jwt>` or `Authorization: Bearer <jwt>`. Session verifies the token
+itself because this socket bypasses Gateway. Missing/invalid tokens return 401,
+session mismatch 403 and connection limit 429 before the upgrade.
 
-CONFIRMED AND PUBLISHED: the separate WS listener is on 3011 in
-`catalinasiminiuc/pad-server-moderation-session-service:2.1.0`, which is on
-Docker Hub for amd64 and arm64. Plain HTTP to that port returns
-`426 UPGRADE_REQUIRED` without reaching Express, and REST stays private on
-3001, which Compose does not publish. `2.0.1` does **not** contain the
-listener, so a deployment pinned to it must keep proxying the socket instead.
+Image `catalinasiminiuc/pad-server-moderation-session-service:2.1.0` is published
+for linux/amd64 and linux/arm64 (registry checked 9 October 2026).
+Shared dev `def8ad6` already configures REST on private 3001 and WS on 3011.
+The WS listener answers 426 to plain HTTP without exposing Express routes.
+SESSION_PUBLIC_WS_BASE_URL is no longer pending publication; use a client-visible
+base such as `ws://localhost:3011` (Compose defaults to the equivalent loopback
+address 127.0.0.1). Keep SESSION_WS_PORT and the public base consistent.
 
-Common Compose publishes 3011 from the `session` service itself and configures:
-
-```dotenv
-SESSION_PUBLIC_WS_BASE_URL=ws://127.0.0.1:3011
-```
-
-Verified in the shared deployment by `tests/verify_compose_gateway.py`:
-negotiation returns that URL, the handshake answers `101` with a real session
-token and `401` with an invalid one, and ordinary REST on 3011 answers `426`.
+The integration test defaults to 2.1.0 and checks plain HTTP rejection, query and
+Bearer handshakes, missing/invalid tokens and session mismatch. These new checks
+have not yet been executed here; previous results with 2.0.1 are historical.
 
 ## DM confirmed handshake; separate listener not implemented
 
@@ -89,7 +83,7 @@ Do not publish the shared REST/WS listener as the final Lab 2 arrangement.
 
 | Owner | Required before shared runtime verification |
 |---|---|
-| Session | Publish 2.1.0 and confirm the separate 3011 listener is in that image |
+| Session | Published 2.1.0; rerun dedicated-listener checks and resolve real outgoing-client integration |
 | DM | Implement a WS-only listener, confirm plain-HTTP rejection behaviour, port and published image tag |
 | Gateway/shared stack | Confirm released Gateway image includes PR #6; wire Compose and migrate callers together |
 
@@ -171,3 +165,28 @@ passing Lab 2 checks.
 Target architecture PNG: `docs/images/gateway-lab2-target.png`. Editable sources:
 `docs/gateway-lab2.mmd` and `scripts/render_gateway_diagram.py` (Pillow renderer).
 The existing Lab 1 diagram remains intact.
+
+## Current shared-dev integration supersedes the preparation baseline
+
+Shared dev `def8ad6` includes Gateway and Session 2.1.0, private domain REST ports,
+updated caller URLs, and `tests/verify_compose_gateway.py`. Earlier baseline and
+preparation notes above describe the old 9c41b8a snapshot, not current Compose.
+The local-build overlay now overrides only Gateway build/image; it inherits the
+base port (8080 by default), keys and WS environment instead of adding port 8000
+or replacing the confirmed Session base with an empty value.
+
+For local Gateway builds, set GATEWAY_IMAGE=pad-gateway-service:dev and
+GATEWAY_SOURCE_DIR to the existing Gateway checkout. Both are needed because
+Compose interpolates the base file before merging. Other required image/secret
+values must also be supplied for full configuration validation.
+
+DM currently uses a Caddy WS-only edge in the teammate's merged configuration.
+This prevents ordinary REST publication but is not the previously agreed native
+separate-listener implementation. It is retained unchanged pending team review;
+do not claim DM has implemented its own separate listener. Earlier recommendations
+to leave DM base empty describe the proposed native-listener deployment only.
+
+Run Postman with gatewayBaseUrl=http://127.0.0.1:8080 (or GATEWAY_HTTP_PORT).
+Only use the unconfigured-WS test folder when the corresponding bases really
+are absent; current Compose configures them. Real handshake tests remain distinct
+from successful HTTP negotiation.
