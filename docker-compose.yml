@@ -182,6 +182,13 @@ services:
     ports:
       - "127.0.0.1:${DM_WS_PORT:-3002}:3001"
     networks: [dm, backend]
+    # Healthy once the WebSocket listener answers ordinary HTTP with its 426,
+    # so `up --wait` and dependants do not reach DM while it is still starting.
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode === 426 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   # ---- Moderation Service ----
@@ -219,6 +226,12 @@ services:
       SERVER_RULES_URL: http://gateway:8001/rules
       SESSION_URL: http://gateway:8001/session
     networks: [moderation, backend]
+    # Healthy once REST answers at all (401 without identity headers).
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/decisions/up', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   server-rules-db:
