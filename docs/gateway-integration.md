@@ -279,3 +279,30 @@ validation of an entirely registry-pulled stack or proof of complete Lab 2
 business logic. The suite does not establish all event flows. Runtime tests
 were linux/amd64; ARM64 runtime has not been tested. Existing private .env
 files must be updated separately; .env.example now selects both rc.2 images.
+
+
+### Published Gateway confirmed
+
+Docker Hub tag `augustinploteanu/pad-gateway-service:2.0.0` has manifest digest
+`sha256:22b582856da6c07cb05cb78b44011df0f6b628529eddde31fefc66d1816b7247`,
+matching the successful Gateway CI publication log supplied by the user.
+The tag lists linux/amd64 and linux/arm64. `.env.example` now selects it.
+The earlier 44/45 result used the local Gateway image; a full integration run
+with this published Gateway is still pending. Private .env files are unchanged.
+
+
+### Registry-only integration follow-up
+
+The user subsequently pulled the published Gateway 2.0.0 and ran the shared
+suite with Rules/Records 2.0.0-rc.2 and Session 2.2.0. Result: 44/45 passed.
+This supersedes the pending published-Gateway runtime check above. The only
+failed assertion was ApplicantInitialized reaching Credential automatically (404).
+
+Source audit also identifies gaps NOT covered by this suite: University Record
+still binds ApplicantEventSource to FixtureApplicantEventSource, and Server Rules
+still binds RulesUpdatedPublisher to DatabaseMockRulesUpdatedPublisher. The
+Records academic-year check does not prove real applicant-record materialization.
+These adapters must be replaced for complete real event flows; the common README
+specifies RabbitMQ, whose deployment and exchange/routing contract must align with
+the Applicant/Credential and Moderation owners. Do not describe 44/45 as full Lab 2
+completion or attribute all remaining work solely to Credential.
