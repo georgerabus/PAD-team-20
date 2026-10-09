@@ -52,6 +52,27 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # ---- Event broker ----
+  # Every service's events go through one fanout exchange here; the README has
+  # the convention. Reachable on the backend network only: no port is published.
+  rabbitmq:
+    image: rabbitmq:4
+    # RabbitMQ names its data directory after the hostname, so a fixed one
+    # keeps the queues when the container is recreated.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: pad
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+
   # ---- Player Service ----
   player-db:
     image: postgres:17
@@ -207,8 +228,13 @@ services:
     depends_on:
       moderation-db:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       PORT: 3000
+      # Consumes RulesUpdated from its queue, "moderation". Without this it
+      # asks Server Rules over HTTP instead.
+      RABBITMQ_URL: amqp://pad:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672
       DB_HOST: moderation-db
       DB_PORT: 5432
       DB_NAME: moderation
@@ -238,7 +264,7 @@ services:
       retries: 20
   server-rules:
     image: ${SERVER_RULES_IMAGE:?set SERVER_RULES_IMAGE to a Gateway-compatible repository:tag}
-    environment:
+    environment: &server-rules-env
       APP_ENV: production
       APP_DEBUG: "false"
       APP_KEY: ${SERVER_RULES_APP_KEY:?Set SERVER_RULES_APP_KEY in .env}
@@ -252,10 +278,30 @@ services:
       SESSION_DRIVER: array
       CACHE_STORE: file
       QUEUE_CONNECTION: sync
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: pad
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
     depends_on:
       server-rules-db:
         condition: service_healthy
     networks: [server-rules, backend]
+  # The same image started as the process that publishes the service's outbox.
+  server-rules-publisher:
+    image: ${SERVER_RULES_IMAGE:?set SERVER_RULES_IMAGE to a Gateway-compatible repository:tag}
+    command: ["php", "artisan", "events:publish"]
+    # Without these two every stop waits ten seconds for the kill: the image
+    # stops php-fpm with SIGQUIT, and PHP as PID 1 would ignore SIGTERM.
+    stop_signal: SIGTERM
+    init: true
+    depends_on:
+      # server-rules creates the tables before it serves.
+      server-rules:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment: *server-rules-env
+    networks: [server-rules, backend]
+    restart: unless-stopped
   university-record-db:
     image: postgres:17-bookworm
     environment:
@@ -273,7 +319,7 @@ services:
       retries: 20
   university-record:
     image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
-    environment:
+    environment: &university-record-env
       APP_ENV: production
       APP_DEBUG: "false"
       APP_KEY: ${UNIVERSITY_RECORD_APP_KEY:?Set UNIVERSITY_RECORD_APP_KEY in .env}
@@ -287,10 +333,47 @@ services:
       SESSION_DRIVER: array
       CACHE_STORE: file
       QUEUE_CONNECTION: sync
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: pad
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
     depends_on:
       university-record-db:
         condition: service_healthy
     networks: [university-record, backend]
+  # The same image started as the process that publishes the service's outbox.
+  university-record-publisher:
+    image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
+    command: ["php", "artisan", "events:publish"]
+    # Without these two every stop waits ten seconds for the kill: the image
+    # stops php-fpm with SIGQUIT, and PHP as PID 1 would ignore SIGTERM.
+    stop_signal: SIGTERM
+    init: true
+    depends_on:
+      # university-record creates the tables before it serves.
+      university-record:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment: *university-record-env
+    networks: [university-record, backend]
+    restart: unless-stopped
+  # The same image started as the process that consumes the service's queue.
+  university-record-worker:
+    image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
+    command: ["php", "artisan", "events:consume"]
+    # Without these two every stop waits ten seconds for the kill: the image
+    # stops php-fpm with SIGQUIT, and PHP as PID 1 would ignore SIGTERM.
+    stop_signal: SIGTERM
+    init: true
+    depends_on:
+      # university-record creates the tables before it serves.
+      university-record:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment: *university-record-env
+    networks: [university-record, backend]
+    restart: unless-stopped
 
   # ---- Applicant Service ----
   applicant-db:
@@ -311,15 +394,39 @@ services:
     restart: unless-stopped
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:2.0.0-rc.1}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:2.0.0-rc.2}
     depends_on:
       applicant-db:
         condition: service_healthy
-    environment:
+      rabbitmq:
+        condition: service_healthy
+    environment: &applicant-env
       DB_HOST: applicant-db
       DB_DATABASE: applicant
       DB_USERNAME: applicant
       DB_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: pad
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+    networks: [applicant, backend]
+    restart: unless-stopped
+
+  # The same image started as the worker that consumes the service's queue.
+  applicant-worker:
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:2.0.0-rc.2}
+    command: ["php", "artisan", "events:consume"]
+    # Without these two every stop waits ten seconds for the kill: the image
+    # stops Apache with SIGWINCH, which the PHP CLI ignores, and as PID 1 it
+    # would ignore SIGTERM too.
+    stop_signal: SIGTERM
+    init: true
+    depends_on:
+      # applicant creates the tables before it serves.
+      applicant:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment: *applicant-env
     networks: [applicant, backend]
     restart: unless-stopped
 
@@ -342,16 +449,40 @@ services:
     restart: unless-stopped
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:2.0.0-rc.1}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:2.0.0-rc.2}
     depends_on:
       credential-db:
         condition: service_healthy
-    environment:
+      rabbitmq:
+        condition: service_healthy
+    environment: &credential-env
       DB_HOST: credential-db
       DB_DATABASE: credential
       DB_USERNAME: credential
       DB_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
       CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: pad
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+    networks: [credential, backend]
+    restart: unless-stopped
+
+  # The same image started as the worker that consumes the service's queue.
+  credential-worker:
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:2.0.0-rc.2}
+    command: ["php", "artisan", "events:consume"]
+    # Without these two every stop waits ten seconds for the kill: the image
+    # stops Apache with SIGWINCH, which the PHP CLI ignores, and as PID 1 it
+    # would ignore SIGTERM too.
+    stop_signal: SIGTERM
+    init: true
+    depends_on:
+      # credential creates the tables before it serves.
+      credential:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    environment: *credential-env
     networks: [credential, backend]
     restart: unless-stopped
 
@@ -369,6 +500,7 @@ networks:
   moderation:
 
 volumes:
+  rabbitmq-data:
   applicant-db-data:
   credential-db-data:
   server-rules-db-data:
