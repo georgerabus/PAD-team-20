@@ -328,6 +328,35 @@ with the field errors in `details`.
 Consumers are idempotent on `eventId` and on the domain key (`applicantId`,
 `ruleSetVersion`, `sessionId`), so a redelivery never applies twice.
 
+**Broker.** Every event of every type goes to one durable `fanout` exchange,
+`pad.events`, as persistent JSON with an empty routing key. Each service that
+consumes declares its own durable queue, named after the service, and binds it
+to that exchange:
+
+| Queue | Consumes |
+|---|---|
+| `applicant`, `credential`, `university-record` | `ApplicantInitialized` |
+| `moderation` | `RulesUpdated` |
+| `player` | `SessionCompleted` |
+
+Declare both exactly so, durable, not auto-deleted and without arguments:
+RabbitMQ refuses a declaration that differs from the one already there. A
+fanout exchange copies each event to every queue, so a consumer acknowledges
+and skips the types it does not handle. Session and Server Rules only publish
+and need no queue. An event published before a queue was first declared never
+reaches it, which is why a consumer declares its queue as soon as it starts.
+
+Every service reads the connection from the same variables:
+
+| Variable | Value |
+|---|---|
+| `RABBITMQ_HOST` | `rabbitmq` in Compose |
+| `RABBITMQ_PORT` | `5672` |
+| `RABBITMQ_USER` | `pad` in Compose |
+| `RABBITMQ_PASSWORD` | from `.env` |
+| `RABBITMQ_EXCHANGE` | `pad.events` |
+| `RABBITMQ_QUEUE` | the service's queue above |
+
 **Transport legend.** Each endpoint is tagged `[REST]`, `[EVENT]` or `[WS]`.
 
 ### Data management and the applicant bootstrap
@@ -343,8 +372,9 @@ calls Applicant today, but if Applicant is down it can call either of the others
 and get the same kind of applicant; Applicant catches up from its queue when it
 comes back.
 
-All three are Laravel and share the story generator as one Composer package, so
-a story looks the same whichever service starts it. They all publish to and
+All three are Laravel and generate with the same `StoryGenerator` class, copied
+unchanged into each service, so a story looks the same whichever service starts
+it. They all publish to and
 consume from one fanout exchange. A service that already has the `applicantId`,
 including the one that published it, acknowledges the event and skips it.
 
@@ -809,8 +839,8 @@ the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 
 **This integration branch is not yet a completed Lab 2 deployment.** Required
 Gateway-compatible Rules/Records image references must be supplied. Session
-`2.0.1` still wires mock outgoing clients, and real event delivery is not
-implemented in Applicant/Credential. See
+`2.0.1` still wires mock outgoing clients, and real event delivery through
+RabbitMQ so far runs only between Applicant and Credential. See
 [integration status and verification](docs/gateway-integration.md).
 
 ### What you need
@@ -823,8 +853,8 @@ implemented in Applicant/Credential. See
 ### Setup
 
 ```bash
-# Preserve an existing .env. Fill passwords, issuer secret, Laravel app keys
-# and the required published image references from .env.example.
+# Preserve an existing .env. Fill passwords (the broker's too), issuer secret,
+# Laravel app keys and the required published image references from .env.example.
 test -f .env || cp .env.example .env
 
 mkdir -p keys/player keys/session
@@ -865,8 +895,10 @@ both on port 3000, regardless of their former host ports.
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
 no APP_KEY because they are JSON APIs with no cookie/session encryption.
-Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named
-volumes retain data; `docker compose down -v` deletes this deployment's data.
+Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. RabbitMQ
+publishes no port; Applicant and Credential each run a second container from
+the same image, `applicant-worker` and `credential-worker`, that consumes the
+service's queue. Named volumes retain data; `docker compose down -v` deletes this deployment's data.
 
 `postman/player-and-session.postman_collection.json` runs the Player and
 Session story through the Gateway: the client sends `Authorization`, never the

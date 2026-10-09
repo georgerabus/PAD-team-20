@@ -95,8 +95,8 @@ def main():
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.2.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0-rc.1')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0-rc.1')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0-rc.2')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0-rc.2')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     checks = []
@@ -130,6 +130,7 @@ def main():
             'SESSION_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[1]}',
             'DM_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[2]}',
             'PAD_KEYS_DIR': str(keys), 'CREDENTIAL_ISSUER_SECRET': secrets.token_hex(32),
+            'RABBITMQ_PASSWORD': secrets.token_hex(24),
             'SERVER_RULES_APP_KEY': 'base64:' + base64.b64encode(secrets.token_bytes(32)).decode(),
             'UNIVERSITY_RECORD_APP_KEY': 'base64:' + base64.b64encode(secrets.token_bytes(32)).decode(),
         }
@@ -284,8 +285,15 @@ def main():
                   call(public + f'/applicant/applicants/{applicant_id}/public', headers=junior_session_auth)[0], 200)
             check('public Gateway refuses the full internal Applicant view',
                   call(public + f'/applicant/applicants/{applicant_id}', headers=session_auth)[0], 403)
-            check('ApplicantInitialized reaches Credential automatically',
-                  internal(f'/credential/applicants/{applicant_id}/credentials/validate', 'POST')[0], 200)
+            # Delivery is asynchronous: per the contract Credential answers 404
+            # until it has consumed the event, and callers retry.
+            deadline = time.monotonic() + 15
+            while True:
+                status = internal(f'/credential/applicants/{applicant_id}/credentials/validate', 'POST')[0]
+                if status != 404 or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.5)
+            check('ApplicantInitialized reaches Credential automatically', status, 200)
 
             # Deliberate fixture setup for REST sharing, separate from the event
             # delivery check above. This must not turn missing propagation green.
