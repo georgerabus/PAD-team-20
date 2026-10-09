@@ -331,3 +331,27 @@ a real RabbitMQ passed 16 (exchange, queue and binding as agreed; RulesUpdated
 applied once, older versions ignored; other types skipped without warnings).
 Those were local images built from the merged branches, not the published tags;
 the shared integration suite has not been rerun with 2.2.0 yet.
+
+
+### RabbitMQ event delivery
+
+Compose now runs a RabbitMQ broker, reachable on the backend network only, and
+the processes that use it: `applicant-worker` and `credential-worker` consume
+their queues, `server-rules-publisher` and `university-record-publisher` publish
+their services' outboxes, `university-record-worker` consumes Records' queue,
+and Moderation gets its `RABBITMQ_URL`. The convention they all follow is in
+the common README under *Broker*.
+
+The shared suite passed 46/46 with Rules and Records `2.0.0-rc.3`, DM,
+Moderation and Session `2.2.0`, the published Gateway `2.0.0`, and Applicant and
+Credential built locally from their merged `dev` commits (Applicant #14,
+Credential #16). "ApplicantInitialized reaches Credential automatically" now
+answers 200, which supersedes the 404 recorded above. Applicant and Credential
+`2.0.0-rc.2` must be published from those commits before this Compose file can
+pull them; the suite has not been run against the published tags.
+
+A separate run on the same stack followed three events end to end: an applicant
+started in University Record reached Applicant and Credential, one started in
+Applicant reached Credential and University Record with no rejected events, and
+a rule set created in Server Rules was applied by Moderation from its queue.
+`SessionCompleted`, from Session to Player, was not checked.
