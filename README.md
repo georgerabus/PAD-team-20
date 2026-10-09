@@ -853,8 +853,9 @@ Discord DMs receives Session's public key for its WS handshake.
 
 `GATEWAY_HTTP_PORT` changes the published REST port; 8080 is the default, avoiding
 other local applications on 8000. `SESSION_WS_PORT` and `DM_WS_PORT` default to
-3011 and 3002. Ordinary HTTP requests reach no route on either: Session
-answers `426 UPGRADE_REQUIRED`, the WS edge `404`.
+3011 and 3002. Each is a WebSocket-only listener of its own service, so ordinary
+HTTP requests reach no route on either: both answer `426 UPGRADE_REQUIRED`.
+
 All published ports bind to loopback for the local presentation.
 
 Services call `http://gateway:8001/<prefix>/...`. Port 8001 is never published

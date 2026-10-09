@@ -39,7 +39,7 @@ not explicitly require RabbitMQ; shared transport choices need team agreement.
 ## What this change delivers
 
 The common Compose starts Gateway, all eight domain services, eight separate
-PostgreSQL databases and a WS-only Caddy edge. Client REST enters Gateway at
+PostgreSQL databases. Client REST enters Gateway at
 `http://127.0.0.1:8080`; its internal listener, port 8001, stays private. No
 domain REST or database port is published.
 
@@ -58,14 +58,13 @@ remain with their issuers. Applicant and Credential no longer receive a Session
 key or SERVICE_SECRET. Credential retains CREDENTIAL_ISSUER_SECRET for signing
 documents.
 
-Session serves its WebSocket on a listener of its own since 2.1.0, published
-as 3011: it handles upgrades and answers `426` to ordinary HTTP, which never
-reaches a route. DM still shares one port with its REST routes, so Caddy
-publishes only its `/ws` upgrades on 3002 and returns 404 for the rest.
-Session and DM still validate their own WS handshakes. Gateway PR #6
+Session (since 2.1.0, published as 3011) and DM (since 2.2.0, container port
+3001 published as 3002) each serve their WebSocket on a listener of its own:
+it handles upgrades and answers `426` to ordinary HTTP, which never reaches a
+route. Session and DM still validate their own WS handshakes. Gateway PR #6
 implements authenticated `POST /ws/negotiate`. SESSION_PUBLIC_WS_BASE_URL and
 DM_PUBLIC_WS_BASE_URL tell it the externally reachable addresses; Compose
-points the first at Session itself and the second at the WS-only edge.
+points them at those two listeners.
 
 The three accessible submodules are pinned by this working tree to:
 
@@ -85,8 +84,8 @@ inspected and exercised independently of access to those sources.
 |---|---|---|
 | Player | `catalinasiminiuc/pad-player-service:2.0.0` | Real Player → Gateway → Session flow passed |
 | Session | `catalinasiminiuc/pad-server-moderation-session-service:2.2.0` | Identity, WS and the real outgoing clients through port 8001 all passed |
-| Discord DMs | `augustinploteanu/pad-dm-service:2.1.0` | Real Session access-check and Credential sharing passed |
-| Moderation | `augustinploteanu/pad-moderation-service:2.1.0` | Internal decision listing passed; full decision flow remains unverified |
+| Discord DMs | `augustinploteanu/pad-dm-service:2.2.0` | Dedicated WS listener; real Session access-check and Credential sharing passed on 2.1.0 |
+| Moderation | `augustinploteanu/pad-moderation-service:2.2.0` | Consumes RulesUpdated from `pad.events`; internal decision listing passed on 2.1.0; full decision flow remains unverified |
 | Applicant | `georgerabus/pad-applicant-service:2.0.0-rc.1` | Published from the merged commit above; real create/read passed |
 | Credential | `georgerabus/pad-credential-service:2.0.0-rc.1` | Published from the merged commit above; identity, roles and sharing passed |
 | Server Rules | `loredanaaaa/server-rules-service:1.0.1` | Legacy bearer-token mock; incompatible with Gateway stripping Authorization |
@@ -306,3 +305,29 @@ These adapters must be replaced for complete real event flows; the common README
 specifies RabbitMQ, whose deployment and exchange/routing contract must align with
 the Applicant/Credential and Moderation owners. Do not describe 44/45 as full Lab 2
 completion or attribute all remaining work solely to Credential.
+
+
+### Discord DMs and Moderation 2.2.0
+
+`augustinploteanu/pad-dm-service:2.2.0` serves its WebSocket on a listener of
+its own, container port 3001, published as `DM_WS_PORT`; ordinary HTTP there
+gets `426`. Compose no longer runs the Caddy `ws-edge`, and the integration
+check expects `426` from DM's port and lists DM among the services that publish
+a port.
+
+`augustinploteanu/pad-moderation-service:2.2.0` is ready for the agreed event
+contract: it consumes `RulesUpdated` from the durable fanout exchange
+`pad.events` (empty routing key) through its durable queue `moderation`,
+filtering by `type` and skipping every other event type. Compose does not run a
+broker yet, so Moderation gets no `RABBITMQ_URL` and keeps asking Server Rules
+for `GET /rules/current`, as before. Adding the broker, and the `RABBITMQ_URL`
+that points Moderation at it, is left for when the publishing services (Server
+Rules still publishes through a mock) are ready to connect.
+
+Owner checks before publication: DM 2.2.0 behind the published Gateway 2.0.0
+passed 36 checks (negotiation to the new port, 101/401/403 handshakes, 426 for
+ordinary HTTP, 404 for upgrades on the REST port), and Moderation 2.2.0 against
+a real RabbitMQ passed 16 (exchange, queue and binding as agreed; RulesUpdated
+applied once, older versions ignored; other types skipped without warnings).
+Those were local images built from the merged branches, not the published tags;
+the shared integration suite has not been rerun with 2.2.0 yet.

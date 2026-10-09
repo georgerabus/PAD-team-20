@@ -1,5 +1,6 @@
 # Runs the system from explicit image versions published on Docker Hub.
-# REST is published only by Gateway; ws-edge publishes only WS upgrades.
+# REST is published only by Gateway; Session and Discord DMs publish only their
+# WebSocket listeners.
 # See docs/gateway-integration.md for image readiness and remaining dependencies.
 #
 # Every service owns its own PostgreSQL database, which only that service can
@@ -49,19 +50,6 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
-
-  # Discord DMs still shares one HTTP port with its WebSocket handler, so only
-  # its WS path is published and anything else is refused here. Session needs
-  # no such hop: since 2.1.0 its socket has a listener of its own, which serves
-  # upgrades and nothing else, and publishes that port itself.
-  ws-edge:
-    image: caddy:2.11.2
-    volumes:
-      - ./docker/ws.Caddyfile:/etc/caddy/Caddyfile:ro
-    ports:
-      - "127.0.0.1:${DM_WS_PORT:-3002}:3002"
-    networks: [backend]
     restart: unless-stopped
 
   # ---- Player Service ----
@@ -170,12 +158,16 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: augustinploteanu/pad-dm-service:2.1.0
+    image: augustinploteanu/pad-dm-service:2.2.0
     depends_on:
       dm-db:
         condition: service_healthy
     environment:
       PORT: 3000
+      # WS /ws?sessionId=&token=, on a listener of its own. It serves upgrades
+      # to /ws and nothing else (426 to ordinary HTTP); REST stays on 3000,
+      # reachable only through Gateway.
+      WS_PORT: 3001
       DB_HOST: dm-db
       DB_PORT: 5432
       DB_NAME: dm
@@ -187,6 +179,8 @@ services:
       UNIVERSITY_RECORD_URL: http://gateway:8001/records
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
+    ports:
+      - "127.0.0.1:${DM_WS_PORT:-3002}:3001"
     networks: [dm, backend]
     restart: unless-stopped
 
@@ -209,7 +203,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: augustinploteanu/pad-moderation-service:2.1.0
+    image: augustinploteanu/pad-moderation-service:2.2.0
     depends_on:
       moderation-db:
         condition: service_healthy
