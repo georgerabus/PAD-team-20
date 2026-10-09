@@ -84,7 +84,7 @@ inspected and exercised independently of access to those sources.
 | Service | Published image checked | Result / requirement |
 |---|---|---|
 | Player | `catalinasiminiuc/pad-player-service:2.0.0` | Real Player → Gateway → Session flow passed |
-| Session | `catalinasiminiuc/pad-server-moderation-session-service:2.0.1` | Identity and WS work; outgoing clients still use mocks |
+| Session | `catalinasiminiuc/pad-server-moderation-session-service:2.2.0` | Identity, WS and the real outgoing clients through port 8001 all passed |
 | Discord DMs | `augustinploteanu/pad-dm-service:2.1.0` | Real Session access-check and Credential sharing passed |
 | Moderation | `augustinploteanu/pad-moderation-service:2.1.0` | Internal decision listing passed; full decision flow remains unverified |
 | Applicant | `georgerabus/pad-applicant-service:2.0.0-rc.1` | Published from the merged commit above; real create/read passed |
@@ -127,9 +127,10 @@ expected result while the four integration failures remain:
 | Check | Expected | Actual | Work needed |
 |---|---|---|---|
 | ApplicantInitialized automatically reaches Credential | 200 | 404 | Replace George's log-only EventPublisher / manual consumer with real delivery and test it |
+| A shift scores above zero | >0 | 0 | Follows from the row above: `POST /moderation/decisions` answers `404 APPLICANT_NOT_FOUND` because Credential never learns the applicant, so Moderation's decision log stays empty and Session, which builds the result from that log, scores the shift zero |
 | Rules internal creation through Gateway | 201 | 503 | Loredana: publish Rules with Gateway identity and internal-route authentication |
 | University Record read through Gateway | 200 | 503 | Loredana: publish Records with Gateway identity and preserved access rules |
-| Session's next applicant exists in real Applicant | 200 | 404 | Cătălina: replace Session mock clients with real calls through Gateway |
+| Session's next applicant exists in real Applicant | 200 | 200 | Done in Session 2.2.0: the Applicant, Server Rules and Moderation mocks are real HTTP clients through `gateway:8001` |
 
 The successful checks include fresh registrations and a real team/session,
 public rejection of internal endpoints, rejection of forged identity without

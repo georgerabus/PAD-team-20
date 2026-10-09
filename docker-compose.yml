@@ -121,9 +121,7 @@ services:
     restart: unless-stopped
 
   session:
-    # Still wires mock outgoing clients: full integration needs the owner's
-    # image with real HTTP clients.
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.1.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.2.0}
     depends_on:
       session-db:
         condition: service_healthy
@@ -136,6 +134,11 @@ services:
       WS_PORT: 3011
       SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      # The three services Session calls, through the Gateway's internal
+      # listener. Marked internal in the contract, so reachable there only.
+      APPLICANT_BASE_URL: http://gateway:8001/applicant
+      SERVER_RULES_BASE_URL: http://gateway:8001/rules
+      MODERATION_BASE_URL: http://gateway:8001/moderation
       DB_HOST: session-db
       DB_PORT: 5432
       DB_NAME: session

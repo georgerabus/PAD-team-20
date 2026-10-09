@@ -86,7 +86,7 @@ def main():
     parser.add_argument('--gateway-image', required=True)
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
-    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.1.0')
+    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.2.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0-rc.1')
     parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0-rc.1')
     parser.add_argument('--report', type=Path)
