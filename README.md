@@ -98,9 +98,10 @@ The original domain-interaction diagram remains useful for business ownership:
 ![Architecture Diagram](docs/images/diagram.png)
 
 Each cylinder is a service with its own database. A solid arrow is a synchronous
-REST call, pointing from the caller to the service it calls. A dotted arrow is an
-asynchronous RabbitMQ event, labelled with its name and pointing from publisher
-to consumer.
+REST call, pointing from the caller to the service it calls. A dotted arrow is a
+notification, labelled with its name. The diagram dates from Lab 0, when these
+were planned as broker events; each is a REST call as well now (see
+[Service-to-service calls](#service-to-service-calls)).
 
 Every solid REST arrow in this domain diagram goes through Gateway's internal
 listener in Lab 2. The domain responsibilities remain independent:
@@ -112,12 +113,11 @@ listener in Lab 2. The domain responsibilities remain independent:
   shift ends.
 - **Moderation** judges each decision on its own. It reads the claim from
   Applicant, has Credential check the documents, asks Server Rules for the
-  correct verdict under the rule set it last heard about through `RulesUpdated`,
-  and reports the outcome to Session.
+  correct verdict under the session's current rule set, and reports the outcome
+  to Session.
 - **Applicant, Credential and University Record** form a ring with no owner:
-  whichever is contacted first creates the applicant and announces it with
-  `ApplicantInitialized`, which is why every pair has an event in both
-  directions.
+  whichever is contacted first creates the applicant and hands its story to the
+  other two, which is why every pair has an arrow in both directions.
 - **Discord DMs** checks channel access with Session, and fetches a document
   from Credential or a record from University Record when a player shares one
   into a channel.
@@ -135,13 +135,12 @@ exception is Player, which is TypeScript because it shares an owner with
 Session (see below). Nobody has to switch stacks mid-semester.
 
 TypeScript/NestJS earns its place on the real-time and orchestration cluster.
-NestJS ships WebSocket gateways and a built-in microservice/event transport, so
-the two real-time surfaces (moderator chat, live session state) and the event
-fan-out come from the framework instead of being bolted on. Its type system
+NestJS ships WebSocket gateways, so the two real-time surfaces (moderator chat,
+live session state) come from the framework instead of being bolted on. Its type system
 also keeps the heavily typed contract below honest at compile time.
 
 Player Service is TypeScript for an ownership reason, not a technical one. On
-its own it is CRUD, JWT issuance, one outbound call and one event consumer, and
+its own it is CRUD, JWT issuance, one outbound call and one notification to take in, and
 would sit comfortably in Laravel — it started there. It moved because the same
 teammate owns Player and Session, and Session has to be TypeScript. One person on
 one stack is worth more than the marginally better fit, and the contract between
@@ -157,28 +156,26 @@ under a weekly lab cadence: a working, well-understood service beats a
 marginally lighter one we have to fight. The trade-off is that Laravel is a
 heavier runtime than a PHP microframework, and PHP is weaker at long-lived
 real-time and async work than Node — which is precisely why the real-time and
-orchestration cluster is TypeScript, not PHP. Where these services consume
-events, they do so through a long-running worker (php-amqplib), not inside the
-request cycle.
+orchestration cluster is TypeScript, not PHP.
 
 Every service owns its own PostgreSQL database. No service reads another's
-tables; the only route to another service's data is through its endpoints or
-its events. This is deliberate — a shared database would let us skip the
+tables; the only route to another service's data is through its endpoints.
+This is deliberate — a shared database would let us skip the
 contract, which is the one thing Lab 0 exists to force us to get right.
 
 | Service | Language / Framework | Datastore | Talks via | Why |
 |---|---|---|---|---|
-| Player | TypeScript / NestJS | PostgreSQL | REST, consumes events | Identity, friends and levels; same owner as Session, so same stack |
-| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket, events | Runs the shift, pushes live state, owns role→access |
-| Applicant | PHP / Laravel | PostgreSQL | REST, events both ways | Presented claim and deception; can start an applicant |
-| Credential | PHP / Laravel | PostgreSQL | REST, events both ways | Signs, stores and validates documents; can start an applicant |
-| Server Rules | PHP / Laravel | PostgreSQL | REST, publishes events | Rule generation, storage and verdict evaluation |
-| University Record | PHP / Laravel | PostgreSQL | REST, events both ways | Access-controlled ground-truth store; can start an applicant |
-| Moderation | TypeScript / NestJS | PostgreSQL | REST, consumes events | Decides and scores the admission from Applicant, Credential and Rules |
+| Player | TypeScript / NestJS | PostgreSQL | REST | Identity, friends and levels; same owner as Session, so same stack |
+| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket | Runs the shift, pushes live state, owns role→access |
+| Applicant | PHP / Laravel | PostgreSQL | REST | Presented claim and deception; can start an applicant |
+| Credential | PHP / Laravel | PostgreSQL | REST | Signs, stores and validates documents; can start an applicant |
+| Server Rules | PHP / Laravel | PostgreSQL | REST | Rule generation, storage and verdict evaluation |
+| University Record | PHP / Laravel | PostgreSQL | REST | Access-controlled ground-truth store; can start an applicant |
+| Moderation | TypeScript / NestJS | PostgreSQL | REST | Decides and scores the admission from Applicant, Credential and Rules |
 | Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST | Real-time per-session chat |
 | Gateway | Python / FastAPI | None | REST, WS URL negotiation | Validates tokens, routes and limits requests |
 
-Three communication patterns are in use, each where it fits:
+Two communication patterns are in use, each where it fits:
 
 - **Synchronous REST** is the default, for any call where the caller needs an
   answer before it can continue: opening a session, fetching the next applicant,
@@ -188,11 +185,14 @@ Three communication patterns are in use, each where it fits:
 - **WebSockets** carry the two real-time surfaces: the moderator / junior-mod
   chat in Discord DMs, and the live session state (current applicant, score)
   pushed by Session.
-- **Asynchronous events** (RabbitMQ) carry the three fire-and-forget paths where
-  the sender does not wait for the receiver: a new applicant, announced by
-  whichever of Applicant, Credential and University Record created it to the
-  other two; Server Rules announcing a new rule set to Moderation; and Session
-  publishing the shift result to Player.
+
+There is no message broker. The three paths where one service only has news
+for another are REST calls like the rest: a new applicant's story, handed by whichever
+of Applicant, Credential and University Record created it to the other two; the
+session's current rule set, which Moderation asks Server Rules for; and the
+shift result, which Session sends to Player. None of them needs a queue, and a
+broker would add a container, a worker beside every service that listens, and a
+second way for a request to fail.
 
 ---
 
@@ -318,72 +318,47 @@ the service is already handling as many requests as it allows at once, sent
 with a `Retry-After` header. A `422` carries `"error":"VALIDATION_FAILED"`,
 with the field errors in `details`.
 
-**Event envelope.** Async events travel through RabbitMQ as:
+**Event envelope.** `SessionCompleted`, the one notification sent in an
+envelope, is the body of a REST call:
 
 ```json
-{ "eventId": "UUID", "type": "ApplicantInitialized",
+{ "eventId": "UUID", "type": "SessionCompleted",
   "occurredAt": "timestamp", "sessionId": "UUID", "payload": {} }
 ```
 
-Consumers are idempotent on `eventId` and on the domain key (`applicantId`,
-`ruleSetVersion`, `sessionId`), so a redelivery never applies twice.
+Player is idempotent on `eventId` and on `sessionId`, so a repeated call never
+applies twice.
 
-**Broker.** Every event of every type goes to one durable `fanout` exchange,
-`pad.events`, as persistent JSON with an empty routing key. Each service that
-consumes declares its own durable queue, named after the service, and binds it
-to that exchange:
-
-| Queue | Consumes |
-|---|---|
-| `applicant`, `credential`, `university-record` | `ApplicantInitialized` |
-| `moderation` | `RulesUpdated` |
-| `player` | `SessionCompleted` |
-
-Declare both exactly so, durable, not auto-deleted and without arguments:
-RabbitMQ refuses a declaration that differs from the one already there. A
-fanout exchange copies each event to every queue, so a consumer acknowledges
-and skips the types it does not handle. Session and Server Rules only publish
-and need no queue. An event published before a queue was first declared never
-reaches it, which is why a consumer declares its queue as soon as it starts.
-
-Every service reads the connection from the same variables:
-
-| Variable | Value |
-|---|---|
-| `RABBITMQ_HOST` | `rabbitmq` in Compose |
-| `RABBITMQ_PORT` | `5672` |
-| `RABBITMQ_USER` | `pad` in Compose |
-| `RABBITMQ_PASSWORD` | from `.env` |
-| `RABBITMQ_EXCHANGE` | `pad.events` |
-| `RABBITMQ_QUEUE` | the service's queue above |
-
-**Transport legend.** Each endpoint is tagged `[REST]`, `[EVENT]` or `[WS]`.
+**Transport legend.** Each endpoint is tagged `[REST]` or `[WS]`.
 
 ### Data management and the applicant bootstrap
 
 Each service keeps its own database and nothing is shared. The one flow that
 spans services is creating an applicant, and **no service is in charge of it**.
 Applicant, Credential and University Record each expose the same
-`POST /applicants {sessionId}`. Whichever one is contacted first generates the
-whole coherent story, keeps its own slice, and publishes the story as
-`ApplicantInitialized`. The other two consume it and materialize their slices.
-None of the three waits on another and none is a required entry point. Session
-calls Applicant today, but if Applicant is down it can call either of the others
-and get the same kind of applicant; Applicant catches up from its queue when it
-comes back.
+`POST /applicants`, and it has two uses. Called with `{sessionId}`, the service
+was contacted first: it generates the whole coherent story, hands it to the
+other two on that same endpoint, through the Gateway's internal port, and keeps
+its own slice. Called with a story, it keeps its slice and passes nothing on.
+None of the three is a required entry point: Session calls Applicant today, and
+would get the same kind of applicant from either of the others.
+
+The hand-over finishes before the first call answers, so the other two already
+have the applicant when the caller receives its `applicantId`. If one of them
+does not accept the story, the call answers `502 PEER_UNAVAILABLE` and the
+service keeps nothing, so the caller can ask again. A service that already has
+the `applicantId` leaves it as it is and answers `200`.
 
 All three are Laravel and generate with the same `StoryGenerator` class, copied
 unchanged into each service, so a story looks the same whichever service starts
-it. They all publish to and
-consume from one fanout exchange. A service that already has the `applicantId`,
-including the one that published it, acknowledges the event and skips it.
+it.
 
 The story has four parts: what the applicant *presents* at the door (which may
 be false), the *ground truth* in the records, the *documents* they hand over,
 and the *deception* metadata linking them.
 
 ```json
-// ApplicantInitialized.payload
+// ApplicantStory
 {
   "applicantId": "UUID",
   "sessionId": "UUID",
@@ -455,8 +430,10 @@ team's `members[]` therefore names each member, since an id alone could not be
 turned into a username, and carries `level` because that is what Session's
 roster needs.
 
-**Consumes** `SessionCompleted` → award XP, increment `completedShifts`, apply
-`disciplinaryActions`. Levels follow XP: one level per 100 XP.
+**Receives** `SessionCompleted` from Session, on
+`POST /internal/events/session-completed` *(internal)* → award XP, increment
+`completedShifts`, apply `disciplinaryActions`. Levels follow XP: one level per
+100 XP.
 
 ### Server Moderation Session Service
 
@@ -470,7 +447,7 @@ roster needs.
 | `POST /sessions/{id}/next-applicant` `[REST]` | — | `202 {applicantId}` *(calls Applicant)* |
 | `GET /sessions/{id}/current-applicant` `[REST]` | — | `200 {applicantId}` |
 | `POST /sessions/{id}/outcomes` `[REST]` | `{decisionId, applicantId, correct, penalty}` *(internal, Moderation)* | `200` |
-| `POST /sessions/{id}/end` `[REST]` | — | `200 SessionResult` *(reads the decision log from Moderation, emits SessionCompleted)* |
+| `POST /sessions/{id}/end` `[REST]` | — | `200 SessionResult` *(reads the decision log from Moderation, sends SessionCompleted to Player)* |
 | `GET /sessions/{id}` `[REST]` | — | `200 SessionState` |
 | `GET /sessions/{id}/results` `[REST]` | — | `200 SessionResult` |
 | `GET /sessions/{id}/access-check` `[REST]` | `?playerId=&channel=` *(internal, Discord DMs)* | `200 {allowed:bool}` |
@@ -520,7 +497,7 @@ each junior mod who joined earns half of it, never below zero, and a player's
 `disciplinaryActions` counts their own decisions that carried a penalty. Only
 the moderator decides, so only the moderator can collect them.
 
-**Publishes** `SessionCompleted { sessionId, perPlayer[] }`.
+**Sends** `SessionCompleted { sessionId, perPlayer[] }` to Player.
 
 Session is the authority on role→access. Record access goes into the session
 token, and reaches University Record as `X-Record-Access` once the Gateway has
@@ -532,7 +509,8 @@ whole shift while a token only lives 15 minutes.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
+| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, hands it to Credential and University Record)* \| `502` |
+| `POST /applicants` `[REST]` | `ApplicantStory` *(internal, Credential or University Record)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
 | `GET /applicants/{id}` `[REST]` | *(internal, Moderation — includes impostor flag)* | `200 Applicant` |
 | `GET /applicants/{id}/public` `[REST]` | — *(session token of the applicant's session, any role)* | `200 ApplicantPublic` *(what the moderator sees)* \| `401` \| `403` \| `404` |
 | `GET /applicants?sessionId=` `[REST]` | — *(session token of that session)* | `200 [ApplicantPublic]` \| `401` \| `403` |
@@ -549,9 +527,8 @@ whole shift while a token only lives 15 minutes.
 { "...ApplicantPublic":"...", "isImpostor":"bool", "strategy":"string" }
 ```
 
-**Publishes** `ApplicantInitialized` when contacted first.
-**Consumes** `ApplicantInitialized` → materialize the `presented` and
-`deception` slice.
+**Sends** `ApplicantStory` to the other two when contacted first.
+**Receives** it from them → keep the `presented` and `deception` slice.
 
 ### Credential Service
 
@@ -567,7 +544,7 @@ the player/session UUIDs and session role (`401 INVALID_GATEWAY_IDENTITY` when
 missing or malformed), then enforces:
 
 1. The identity's `sessionId` equals the `sessionId` stored for the applicant (from
-   `ApplicantInitialized`). Otherwise `403 SESSION_MISMATCH`.
+   its story). Otherwise `403 SESSION_MISMATCH`.
 2. The identity's `role` is `moderator`. Otherwise `403 ROLE_NOT_ALLOWED`. The
    documents are handed to the moderator; a junior mod sees one only when the
    moderator shares it into a channel, and then Discord DMs makes the call with
@@ -575,13 +552,14 @@ missing or malformed), then enforces:
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
+| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, hands it to Applicant and University Record)* \| `502` |
+| `POST /applicants` `[REST]` | `ApplicantStory` *(internal, Applicant or University Record)* | `201 {applicantId}` *(keeps the documents)* \| `200` *(already had it)* |
 | `GET /applicants/{id}/credentials` `[REST]` | — *(session token, moderator)* | `200 [Credential]` \| `401` \| `403` \| `404` |
 | `GET /credentials/{id}` `[REST]` | — *(session token, moderator)* | `200 Credential` \| `401` \| `403` \| `404 CREDENTIAL_NOT_FOUND` |
 | `POST /applicants/{id}/credentials/validate` `[REST]` | — *(internal, Moderation)* | `200 CredentialValidation` \| `404` |
 
-Right after an applicant is created, a read may return `404 APPLICANT_NOT_FOUND`
-until Credential has consumed `ApplicantInitialized`; clients retry.
+An applicant is readable here as soon as the call that created it has answered:
+the story is handed over before it does.
 
 **Document fields.** `fields` depends on `type`. Unmarked fields are strings,
 and every listed field is required: a document missing one is `incomplete` by
@@ -618,7 +596,7 @@ platform.
                   "field":"string|null" }] } ] }
 ```
 
-**On `ApplicantInitialized`** (skipped if the `applicantId` is already stored),
+**On an applicant's story** (skipped if the `applicantId` is already stored),
 for each entry in `documents`:
 
 1. Store `fields` as given, together with the applicant's `sessionId`.
@@ -646,19 +624,20 @@ every document is sound. Validation reads nothing outside Credential (not the
 claim, not the records), so a genuine document carried by the wrong person
 passes. That case is left to the players.
 
-**Publishes** `ApplicantInitialized` when contacted first.
-**Consumes** `ApplicantInitialized` → materialize the `documents` slice as above.
+**Sends** `ApplicantStory` to the other two when contacted first.
+**Receives** it from them → keep the `documents` slice as above.
 
 ### Server Rules Service
 
 Session asks for a fresh rule set when a shift starts. Every rule set opens with
 two base rules, `is_genuine` and `documents_valid`; the moderator's `level`
 decides how many others are stacked on top, which is how the rules keep getting
-harder between shifts. Each new rule set is announced as `RulesUpdated`.
+harder between shifts. Moderation asks for the session's current one when it
+judges a decision.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /rules` `[REST]` | `{sessionId, level}` *(internal, Session)* | `201 RuleSet` *(emits RulesUpdated)* |
+| `POST /rules` `[REST]` | `{sessionId, level}` *(internal, Session)* | `201 RuleSet` |
 | `GET /rules/current?sessionId=` `[REST]` | — | `200 RuleSet` |
 | `GET /rules/{ruleSetVersion}` `[REST]` | — | `200 RuleSet` |
 | `POST /rules/evaluate` `[REST]` | `{subject, ruleSetVersion}` *(internal, Moderation)* | `200 RuleVerdict` |
@@ -692,8 +671,6 @@ The verdict is the most severe effect among the rules that fire: `ban`, then
 not the records: for a genuine applicant the claim is the truth, and a
 non-genuine one already fails `is_genuine`.
 
-**Publishes** `RulesUpdated { sessionId, ruleSetVersion }`.
-
 ### University Record Service
 
 Reads split into two kinds. **Per-applicant** records (`enrollment`, `emails`,
@@ -711,7 +688,8 @@ shares a record into a channel, made with that player's token.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` | `201 {applicantId}` *(generates the story, emits ApplicantInitialized)* |
+| `POST /applicants` `[REST]` | `{sessionId}` *(internal)* | `201 {applicantId}` *(generates the story, hands it to Applicant and Credential)* \| `502` |
+| `POST /applicants` `[REST]` | `ApplicantStory` *(internal, Applicant or Credential)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
 | `GET /records/enrollment?applicantId=` `[REST]` | — | `200 {enrolled, studentId, major, year, status}` \| `403` |
 | `GET /records/emails?applicantId=` `[REST]` | — | `200 {email, inGroupList}` \| `403` |
 | `GET /records/courses` `[REST]` | *(global, gated by `courses` assignment)* | `200 {courses:[string]}` \| `403` |
@@ -719,16 +697,16 @@ shares a record into a channel, made with that player's token.
 | `GET /records/schedule?applicantId=` `[REST]` | — | `200 {entries:[{course, day, time}]}` \| `403` |
 | `GET /records/fcim-messages?applicantId=` `[REST]` | — | `200 {messages:[{author, text, ts}]}` \| `403` |
 
-**Publishes** `ApplicantInitialized` when contacted first.
-**Consumes** `ApplicantInitialized` → materialize the `groundTruth` slice.
+**Sends** `ApplicantStory` to the other two when contacted first.
+**Receives** it from them → keep the `groundTruth` slice.
 
 ### Moderation Service
 
 On `POST /decisions` the service (1) reads the claim and deception from
 Applicant (`GET /applicants/{id}`), (2) has Credential check the documents
 (`POST /applicants/{id}/credentials/validate`), (3) builds a `Subject` from the
-two and calls `POST /rules/evaluate` with the `ruleSetVersion` from the last
-`RulesUpdated` for the session, (4) compares the moderator's `action` with the
+two and calls `POST /rules/evaluate` with the `ruleSetVersion` of the session's
+current rule set (`GET /rules/current?sessionId=`), (4) compares the moderator's `action` with the
 verdict, (5) records the `Decision`, and (6) reports it to Session
 (`POST /sessions/{id}/outcomes`) before responding, so the moderator's score is
 already updated when the call returns.
@@ -753,8 +731,6 @@ are hunting for.
   "outcome":"enum(correct|wrong_admit|wrong_reject|missed_ban)",
   "decidedAt":"timestamp" }
 ```
-
-**Consumes** `RulesUpdated` → remember the current `ruleSetVersion` per session.
 
 ### Discord DMs Service
 
@@ -805,15 +781,10 @@ server → client:
 { "type":"error", "code":"enum(CHANNEL_ACCESS_DENIED|SHARE_DENIED)" }
 ```
 
-### Asynchronous events
+### Service-to-service calls
 
-| Event | Producer | Consumers |
-|---|---|---|
-| `ApplicantInitialized` | Whichever of Applicant, Credential, University Record was contacted first | The other two |
-| `RulesUpdated` | Server Rules | Moderation |
-| `SessionCompleted` | Session | Player |
-
-### Synchronous service-to-service calls
+Every call between services is synchronous REST through the Gateway's internal
+port. There is no broker.
 
 | Caller | Callee | Purpose |
 |---|---|---|
@@ -821,8 +792,11 @@ server → client:
 | Session | Server Rules | `POST /rules` — rule set for the shift that is starting |
 | Session | Applicant | `POST /applicants` — request the next applicant |
 | Session | Moderation | `GET /sessions/{id}/decisions` — decision log for the final result |
+| Session | Player | `POST /internal/events/session-completed` — the shift result |
+| Applicant, Credential, University Record | The other two | `POST /applicants` — hand over the story of an applicant it started |
 | Moderation | Applicant | `GET /applicants/{id}` — claim and deception |
 | Moderation | Credential | `POST /applicants/{id}/credentials/validate` — are the documents sound |
+| Moderation | Server Rules | `GET /rules/current` — the session's current rule set |
 | Moderation | Server Rules | `POST /rules/evaluate` — the correct verdict |
 | Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision |
 | Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access |
@@ -837,23 +811,25 @@ all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
 
-**This integration branch is not yet a completed Lab 2 deployment.** Required
-Gateway-compatible Rules/Records image references must be supplied. Session
-`2.0.1` still wires mock outgoing clients, and real event delivery through
-RabbitMQ so far runs only between Applicant and Credential. See
+**Two hand-overs are not connected yet.** University Record does not accept an
+applicant's story on `POST /applicants`, so Applicant and Credential are not
+given its address and it does not learn of new applicants. Session writes
+`SessionCompleted` to its log instead of sending it to Player, so a finished
+shift awards no progression unless that call is made by hand, as the Player and
+Session Postman collection does. See
 [integration status and verification](docs/gateway-integration.md).
 
 ### What you need
 
 - Docker with Compose
 - OpenSSL, to generate the Player and Session signing keys
-- Explicit published image references for Gateway, Server Rules and University
-  Record, plus a Session image with real outgoing clients for the full flow
+- The published image references for Gateway, Server Rules and University
+  Record that `.env.example` lists
 
 ### Setup
 
 ```bash
-# Preserve an existing .env. Fill passwords (the broker's too), issuer secret,
+# Preserve an existing .env. Fill passwords, issuer secret,
 # Laravel app keys and the required published image references from .env.example.
 test -f .env || cp .env.example .env
 
@@ -895,10 +871,7 @@ both on port 3000, regardless of their former host ports.
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
 no APP_KEY because they are JSON APIs with no cookie/session encryption.
-Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. RabbitMQ
-publishes no port; Applicant and Credential each run a second container from
-the same image, `applicant-worker` and `credential-worker`, that consumes the
-service's queue. Named volumes retain data; `docker compose down -v` deletes this deployment's data.
+Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named volumes retain data; `docker compose down -v` deletes this deployment's data.
 
 `postman/player-and-session.postman_collection.json` runs the Player and
 Session story through the Gateway: the client sends `Authorization`, never the
@@ -930,9 +903,9 @@ not all been migrated. Run `tests/verify_compose_gateway.py` for the full
 boundary and flow checks; do not use the old collections' historical success as
 evidence for this deployment.
 The test starts its own fresh Compose project and removes only its temporary
-resources. It uses a manual document fixture solely for REST sharing and
-separately checks automatic propagation, so missing event delivery remains a
-failure.
+resources. It hands Credential one known document for the sharing checks and
+separately checks that a new applicant reaches Credential and University
+Record, so a missing hand-over remains a failure.
 
 ### Images
 
@@ -946,7 +919,7 @@ failure.
 | University Record | [`loredanaaaa/university-record-service`](https://hub.docker.com/r/loredanaaaa/university-record-service) |
 | Applicant | [`georgerabus/pad-applicant-service`](https://hub.docker.com/r/georgerabus/pad-applicant-service) |
 | Credential | [`georgerabus/pad-credential-service`](https://hub.docker.com/r/georgerabus/pad-credential-service) |
-| Gateway | Set `GATEWAY_IMAGE` to the confirmed repository and tag published by its CI; publication is pending |
+| Gateway | [`augustinploteanu/pad-gateway-service`](https://hub.docker.com/r/augustinploteanu/pad-gateway-service) |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact

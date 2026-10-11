@@ -2,7 +2,7 @@
 
 Uses temporary credentials, signing keys, volumes and loopback ports. Does not
 read the project's .env or alter an existing Compose deployment. Failures in
-rules/records, Session's outgoing calls or event delivery remain failures;
+rules/records, Session's outgoing calls or the applicant hand-over remain failures;
 successful container startup alone is not a complete integration result.
 """
 
@@ -95,8 +95,8 @@ def main():
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.2.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0-rc.2')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0-rc.2')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     checks = []
@@ -130,7 +130,6 @@ def main():
             'SESSION_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[1]}',
             'DM_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[2]}',
             'PAD_KEYS_DIR': str(keys), 'CREDENTIAL_ISSUER_SECRET': secrets.token_hex(32),
-            'RABBITMQ_PASSWORD': secrets.token_hex(24),
             'SERVER_RULES_APP_KEY': 'base64:' + base64.b64encode(secrets.token_bytes(32)).decode(),
             'UNIVERSITY_RECORD_APP_KEY': 'base64:' + base64.b64encode(secrets.token_bytes(32)).decode(),
         }
@@ -285,25 +284,24 @@ def main():
                   call(public + f'/applicant/applicants/{applicant_id}/public', headers=junior_session_auth)[0], 200)
             check('public Gateway refuses the full internal Applicant view',
                   call(public + f'/applicant/applicants/{applicant_id}', headers=session_auth)[0], 403)
-            # Delivery is asynchronous: per the contract Credential answers 404
-            # until it has consumed the event, and callers retry.
-            deadline = time.monotonic() + 15
-            while True:
-                status = internal(f'/credential/applicants/{applicant_id}/credentials/validate', 'POST')[0]
-                if status != 404 or time.monotonic() >= deadline:
-                    break
-                time.sleep(0.5)
-            check('ApplicantInitialized reaches Credential automatically', status, 200)
+            # Applicant hands the story over before it answers, so the others have it already.
+            check('a new Applicant reaches Credential',
+                  internal(f'/credential/applicants/{applicant_id}/credentials/validate', 'POST')[0], 200)
+            check('a new Applicant reaches University Record',
+                  internal(f'/records/records/enrollment?applicantId={applicant_id}', headers={
+                      'X-Player-Id': junior['playerId'], 'X-Session-Id': session_id,
+                      'X-Session-Role': 'junior_mod', 'X-Record-Access': 'enrollment'})[0], 200)
 
-            # Deliberate fixture setup for REST sharing, separate from the event
-            # delivery check above. This must not turn missing propagation green.
+            # A story of one known document, handed over the way another service
+            # would, for the sharing checks below. Separate from the checks above.
             fixture_id = str(uuid.uuid4())
-            event = {'type': 'ApplicantInitialized', 'payload': {'applicantId': fixture_id, 'sessionId': session_id,
+            story = {'applicantId': fixture_id, 'sessionId': session_id,
                 'documents': [{'type': 'student_id', 'status': 'valid', 'fields': {
                     'studentId': 'FAF230042', 'fullName': 'Ana Rusu', 'faculty': 'FCIM', 'major': 'FAF',
                     'year': 3, 'issuedAt': '2023-09-01', 'expiresAt': '2099-06-30',
-                }}]}}
-            compose('exec', '-T', 'credential', 'php', 'artisan', 'events:handle', input=json.dumps(event))
+                }}]}
+            check('Credential stores a story from another service',
+                  internal('/credential/applicants', 'POST', story)[0], 201)
             status, documents = call(public + f'/credential/applicants/{fixture_id}/credentials', headers=session_auth)
             check('moderator reads Credential fixture through Gateway', status, 200)
             check('junior is refused by Credential',
@@ -336,6 +334,12 @@ def main():
             if status == 202:
                 check('Session next-applicant exists in real Applicant service',
                       internal('/applicant/applicants/' + next_applicant['applicantId'])[0], 200)
+                # Moderation reads the claim, has the documents checked and asks Server
+                # Rules for the session's rule set: every step is a call through Gateway.
+                check('Moderation records a decision on that Applicant',
+                      call(public + '/moderation/decisions', 'POST', {
+                          'sessionId': session_id, 'applicantId': next_applicant['applicantId'],
+                          'moderatorId': moderator['playerId'], 'action': 'accept'}, session_auth)[0], 201)
         finally:
             subprocess.run([*command, 'down', '-v', '--remove-orphans'], capture_output=True, text=True, timeout=120)
 
