@@ -1,0 +1,350 @@
+{
+  "info": {
+    "name": "Gateway Lab 2 - staged verification",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run folders separately. Configured and unconfigured cases are mutually exclusive. Supply a real session token and its sessionId locally; no mock tokens. HTTP negotiation checks do not establish WebSockets."
+  },
+  "variable": [
+    {
+      "key": "gatewayBaseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "sessionToken",
+      "value": ""
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "otherSessionId",
+      "value": "00000000-0000-4000-8000-000000000001"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. No credentials required",
+      "item": [
+        {
+          "name": "Gateway health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/up"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing token rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"session\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"Error code\", () => pm.expect(pm.response.json().error).to.eql(\"INVALID_TOKEN\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid token rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer invalid-token"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"dm\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"Error code\", () => pm.expect(pm.response.json().error).to.eql(\"INVALID_TOKEN\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Real session token and configured WS bases",
+      "item": [
+        {
+          "name": "session negotiation (requires configured listener)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sessionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"session\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const result = pm.response.json();",
+                  "pm.test(\"Token-free URL\", () => { pm.expect(result).to.have.all.keys(\"surface\", \"sessionId\", \"url\"); pm.expect(result.url).not.to.match(/[?&]token=/); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "dm negotiation (requires configured listener)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sessionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"dm\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const result = pm.response.json();",
+                  "pm.test(\"Token-free URL\", () => { pm.expect(result).to.have.all.keys(\"surface\", \"sessionId\", \"url\"); pm.expect(result.url).not.to.match(/[?&]token=/); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown surface",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sessionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"unknown\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Error code\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_FAILED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Different session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sessionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"session\", \"sessionId\": \"{{otherSessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Error code\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_MISMATCH\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Real session token and unconfigured WS bases",
+      "item": [
+        {
+          "name": "session unconfigured",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sessionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"session\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", () => pm.response.to.have.status(503));",
+                  "pm.test(\"Error code\", () => pm.expect(pm.response.json().error).to.eql(\"WS_UNAVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "dm unconfigured",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sessionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayBaseUrl}}/ws/negotiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"surface\": \"dm\", \"sessionId\": \"{{sessionId}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", () => pm.response.to.have.status(503));",
+                  "pm.test(\"Error code\", () => pm.expect(pm.response.json().error).to.eql(\"WS_UNAVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

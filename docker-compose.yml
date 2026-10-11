@@ -1,0 +1,398 @@
+# Runs the system from explicit image versions published on Docker Hub.
+# REST is published only by Gateway; Session and Discord DMs publish only their
+# WebSocket listeners.
+# See docs/gateway-integration.md for image readiness and remaining dependencies.
+#
+# Every service owns its own PostgreSQL database, which only that service can
+# reach: the databases publish no ports and sit on the service's own network.
+#
+# Before the first `docker compose up`:
+#   1. cp .env.example .env, and fill in every value
+#   2. generate the RS256 keypairs the two token issuers sign with:
+#        mkdir -p keys/player keys/session
+#        openssl genrsa -out keys/player/private.pem 2048
+#        openssl rsa -in keys/player/private.pem -pubout -out keys/player/public.pem
+#        openssl genrsa -out keys/session/private.pem 2048
+#        openssl rsa -in keys/session/private.pem -pubout -out keys/session/public.pem
+#
+# Database schemas live in db/<service>/ and run on the first start of an
+# empty volume.
+
+name: pad-team-20
+
+services:
+  gateway:
+    image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE to a published Gateway repository:tag}
+    environment:
+      PLAYER_BASE_URL: http://player:3000
+      SESSION_BASE_URL: http://session:3001
+      APPLICANT_BASE_URL: http://applicant:80
+      CREDENTIAL_BASE_URL: http://credential:80
+      RULES_BASE_URL: http://server-rules:80
+      RECORDS_BASE_URL: http://university-record:80
+      MODERATION_BASE_URL: http://moderation-service:3000
+      DM_BASE_URL: http://dm-service:3000
+      PLAYER_PUBLIC_KEY_PATH: /app/keys/player-public.pem
+      SESSION_PUBLIC_KEY_PATH: /app/keys/session-public.pem
+      SESSION_PUBLIC_WS_BASE_URL: ${SESSION_PUBLIC_WS_BASE_URL:-ws://127.0.0.1:${SESSION_WS_PORT:-3011}}
+      DM_PUBLIC_WS_BASE_URL: ${DM_PUBLIC_WS_BASE_URL:-ws://127.0.0.1:${DM_WS_PORT:-3002}}
+      REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
+      MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
+      MAX_CONCURRENT_INTERNAL_REQUESTS: ${GATEWAY_MAX_CONCURRENT_INTERNAL_REQUESTS:-100}
+    volumes:
+      - ${PAD_KEYS_DIR:-./keys}/player/public.pem:/app/keys/player-public.pem:ro
+      - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
+    ports:
+      - "127.0.0.1:${GATEWAY_HTTP_PORT:-8080}:8000"
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/up', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # ---- Player Service ----
+  player-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: player
+      POSTGRES_USER: player
+      POSTGRES_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
+    volumes:
+      - player-db-data:/var/lib/postgresql/data
+      - ./db/player:/docker-entrypoint-initdb.d:ro
+    networks: [player]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U player -d player"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  player:
+    image: catalinasiminiuc/pad-player-service:2.0.0
+    depends_on:
+      player-db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      SESSION_BASE_URL: http://gateway:8001/session
+      DB_HOST: player-db
+      DB_PORT: 5432
+      DB_NAME: player
+      DB_USER: player
+      DB_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
+    volumes:
+      - ${PAD_KEYS_DIR:-./keys}/player:/app/keys:ro
+    networks: [player, backend]
+    restart: unless-stopped
+
+  # ---- Server Moderation Session Service ----
+  session-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: session
+      POSTGRES_USER: session
+      POSTGRES_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
+    volumes:
+      - session-db-data:/var/lib/postgresql/data
+      - ./db/session:/docker-entrypoint-initdb.d:ro
+    networks: [session]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U session -d session"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  session:
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.2.0}
+    depends_on:
+      session-db:
+        condition: service_healthy
+    environment:
+      # REST, reachable only through the Gateway: this port is not published.
+      PORT: 3001
+      # WS /sessions/{id}/live, on a listener of its own. It serves protocol
+      # upgrades and answers 426 to anything else, so publishing it exposes
+      # the socket without exposing a single REST route.
+      WS_PORT: 3011
+      SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      # The three services Session calls, through the Gateway's internal
+      # listener. Marked internal in the contract, so reachable there only.
+      APPLICANT_BASE_URL: http://gateway:8001/applicant
+      SERVER_RULES_BASE_URL: http://gateway:8001/rules
+      MODERATION_BASE_URL: http://gateway:8001/moderation
+      DB_HOST: session-db
+      DB_PORT: 5432
+      DB_NAME: session
+      DB_USER: session
+      DB_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
+    volumes:
+      - ${PAD_KEYS_DIR:-./keys}/session:/app/keys:ro
+    ports:
+      - "127.0.0.1:${SESSION_WS_PORT:-3011}:3011"
+    networks: [session, backend]
+    restart: unless-stopped
+
+  # ---- Discord DMs Service ----
+  dm-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: dm
+      POSTGRES_USER: dm
+      POSTGRES_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
+    volumes:
+      - dm-db-data:/var/lib/postgresql/data
+      - ./db/dm:/docker-entrypoint-initdb.d:ro
+    networks: [dm]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dm -d dm"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  dm-service:
+    image: augustinploteanu/pad-dm-service:2.2.0
+    depends_on:
+      dm-db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      # WS /ws?sessionId=&token=, on a listener of its own. It serves upgrades
+      # to /ws and nothing else (426 to ordinary HTTP); REST stays on 3000,
+      # reachable only through Gateway.
+      WS_PORT: 3001
+      DB_HOST: dm-db
+      DB_PORT: 5432
+      DB_NAME: dm
+      DB_USER: dm
+      DB_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
+      SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/session-public.pem
+      SESSION_URL: http://gateway:8001/session
+      CREDENTIAL_URL: http://gateway:8001/credential
+      UNIVERSITY_RECORD_URL: http://gateway:8001/records
+    volumes:
+      - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
+    ports:
+      - "127.0.0.1:${DM_WS_PORT:-3002}:3001"
+    networks: [dm, backend]
+    # Healthy once the WebSocket listener answers ordinary HTTP with its 426,
+    # so `up --wait` and dependants do not reach DM while it is still starting.
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode === 426 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # ---- Moderation Service ----
+  moderation-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: moderation
+      POSTGRES_USER: moderation
+      POSTGRES_PASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
+    volumes:
+      - moderation-db-data:/var/lib/postgresql/data
+      - ./db/moderation:/docker-entrypoint-initdb.d:ro
+    networks: [moderation]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U moderation -d moderation"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  moderation-service:
+    image: augustinploteanu/pad-moderation-service:2.2.0
+    depends_on:
+      moderation-db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DB_HOST: moderation-db
+      DB_PORT: 5432
+      DB_NAME: moderation
+      DB_USER: moderation
+      DB_PASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
+      APPLICANT_URL: http://gateway:8001/applicant
+      CREDENTIAL_URL: http://gateway:8001/credential
+      SERVER_RULES_URL: http://gateway:8001/rules
+      SESSION_URL: http://gateway:8001/session
+    networks: [moderation, backend]
+    # Healthy once REST answers at all (401 without identity headers).
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/decisions/up', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  server-rules-db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: server_rules
+      POSTGRES_USER: server_rules
+      POSTGRES_PASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
+    volumes:
+      - server-rules-db-data:/var/lib/postgresql/data
+      - ./db/server-rules:/docker-entrypoint-initdb.d:ro
+    networks: [server-rules]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U server_rules -d server_rules"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  server-rules:
+    image: ${SERVER_RULES_IMAGE:?set SERVER_RULES_IMAGE to a Gateway-compatible repository:tag}
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${SERVER_RULES_APP_KEY:?Set SERVER_RULES_APP_KEY in .env}
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: pgsql
+      DB_HOST: server-rules-db
+      DB_PORT: 5432
+      DB_DATABASE: server_rules
+      DB_USERNAME: server_rules
+      DB_PASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
+      SESSION_DRIVER: array
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+    depends_on:
+      server-rules-db:
+        condition: service_healthy
+    networks: [server-rules, backend]
+  university-record-db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: university_record
+      POSTGRES_USER: university_record
+      POSTGRES_PASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
+    volumes:
+      - university-record-db-data:/var/lib/postgresql/data
+      - ./db/university-record:/docker-entrypoint-initdb.d:ro
+    networks: [university-record]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U university_record -d university_record"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  university-record:
+    image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${UNIVERSITY_RECORD_APP_KEY:?Set UNIVERSITY_RECORD_APP_KEY in .env}
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: pgsql
+      DB_HOST: university-record-db
+      DB_PORT: 5432
+      DB_DATABASE: university_record
+      DB_USERNAME: university_record
+      DB_PASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
+      SESSION_DRIVER: array
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+    depends_on:
+      university-record-db:
+        condition: service_healthy
+    networks: [university-record, backend]
+
+  # ---- Applicant Service ----
+  applicant-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: applicant
+      POSTGRES_USER: applicant
+      POSTGRES_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
+    volumes:
+      - applicant-db-data:/var/lib/postgresql/data
+      - ./db/applicant:/docker-entrypoint-initdb.d:ro
+    networks: [applicant]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U applicant -d applicant"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  applicant:
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:2.0.0}
+    depends_on:
+      applicant-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: applicant-db
+      DB_DATABASE: applicant
+      DB_USERNAME: applicant
+      DB_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
+      # A new applicant's story is handed to Credential through the Gateway.
+      # UNIVERSITY_RECORD_URL (http://gateway:8001/records) joins it once
+      # University Record accepts a story on POST /applicants.
+      CREDENTIAL_URL: http://gateway:8001/credential
+    networks: [applicant, backend]
+    restart: unless-stopped
+
+  # ---- Credential Service ----
+  credential-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: credential
+      POSTGRES_USER: credential
+      POSTGRES_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
+    volumes:
+      - credential-db-data:/var/lib/postgresql/data
+      - ./db/credential:/docker-entrypoint-initdb.d:ro
+    networks: [credential]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U credential -d credential"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  credential:
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:2.0.0}
+    depends_on:
+      credential-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: credential-db
+      DB_DATABASE: credential
+      DB_USERNAME: credential
+      DB_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
+      CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
+      # The same hand-over when Credential is the one that starts an applicant.
+      APPLICANT_URL: http://gateway:8001/applicant
+    networks: [credential, backend]
+    restart: unless-stopped
+
+# One private network per service for its database, and a shared one the
+# services use to reach each other.
+networks:
+  applicant:
+  credential:
+  server-rules:
+  university-record:
+  backend:
+  player:
+  session:
+  dm:
+  moderation:
+
+volumes:
+  applicant-db-data:
+  credential-db-data:
+  server-rules-db-data:
+  university-record-db-data:
+  player-db-data:
+  session-db-data:
+  dm-db-data:
+  moderation-db-data:

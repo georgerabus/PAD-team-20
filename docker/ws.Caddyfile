@@ -1,0 +1,17 @@
+{
+    admin off
+    auto_https off
+}
+
+:3002 {
+    @dm_socket {
+        path /ws
+        header Upgrade websocket
+    }
+    handle @dm_socket {
+        reverse_proxy dm-service:3000
+    }
+    handle {
+        respond "WebSocket endpoint only" 404
+    }
+}

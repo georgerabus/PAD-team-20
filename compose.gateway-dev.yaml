@@ -1,0 +1,10 @@
+# Build the Gateway locally while inheriting all networking, key mounts and
+# environment settings from docker-compose.yml. No extra published ports.
+# GATEWAY_IMAGE must still be set for base-file interpolation (use
+# pad-gateway-service:dev for this local build).
+# docker compose -f docker-compose.yml -f compose.gateway-dev.yaml up -d --build gateway
+services:
+  gateway:
+    build:
+      context: ${GATEWAY_SOURCE_DIR:?Set GATEWAY_SOURCE_DIR to the Gateway checkout containing PR 6}
+    image: pad-gateway-service:dev

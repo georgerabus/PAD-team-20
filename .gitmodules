@@ -22,3 +22,6 @@
 [submodule "pad-dm-service"]
 	path = pad-dm-service
 	url = https://github.com/augustin-ploteanu/dm-service
+[submodule "pad-gateway-service"]
+	path = pad-gateway-service
+	url = https://github.com/georgerabus/pad-team20-gateway
