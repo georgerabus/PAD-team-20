@@ -355,3 +355,39 @@ started in University Record reached Applicant and Credential, one started in
 Applicant reached Credential and University Record with no rejected events, and
 a rule set created in Server Rules was applied by Moderation from its queue.
 `SessionCompleted`, from Session to Player, was not checked.
+
+
+### RabbitMQ removed
+
+No lab asks for a broker, so Compose no longer runs one. The `rabbitmq` service
+and its volume are gone, with the five processes that existed only to use it:
+`applicant-worker`, `credential-worker`, `server-rules-publisher`,
+`university-record-publisher` and `university-record-worker`. Moderation gets
+no `RABBITMQ_URL` and asks Server Rules for the session's current rule set over
+HTTP. The sections above that describe events, queues and workers are history.
+
+A new applicant's story is handed over by REST instead: the service that starts
+it calls `POST /applicants` on the others through `gateway:8001`, before it
+answers. Applicant and Credential do this from `2.0.0` (Applicant #15,
+Credential #17). University Record `2.0.0-rc.3` answers `422` to a story, so
+Compose gives Applicant and Credential no `UNIVERSITY_RECORD_URL` yet, and
+University Record does not learn of new applicants. To connect it, University
+Record accepts a story on `POST /applicants` and hands over the applicants it
+starts; then both services get
+`UNIVERSITY_RECORD_URL: http://gateway:8001/records`.
+
+The shared suite passed 48/49 on this Compose with Rules and Records
+`2.0.0-rc.3`, DM, Moderation and Session `2.2.0`, the published Gateway `2.0.0`,
+and Applicant and Credential `2.0.0` pulled from Docker Hub. The one failure is
+a new check, "a new Applicant reaches University Record" (404). The
+other new check, "Moderation records a decision on that Applicant" (201),
+exercises the rule set read without a broker. The two Postman collections that
+run through the Gateway passed on this Compose with no failed assertion,
+Applicant and Credential 33 and Player and Session 60, using local builds of the
+commits `2.0.0` was published from.
+
+One path never used the broker and is still open: Session `2.2.0` writes
+`SessionCompleted` to its log (`LoggingSessionEventsPublisher`) and does not
+call Player's `POST /internal/events/session-completed`. Compose gives Session
+no Player address. The Player and Session Postman collection makes that call
+itself.
