@@ -811,12 +811,11 @@ all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
 
-**Two hand-overs are not connected yet.** University Record does not accept an
+**One hand-over is not connected yet.** University Record does not accept an
 applicant's story on `POST /applicants`, so Applicant and Credential are not
-given its address and it does not learn of new applicants. Session writes
-`SessionCompleted` to its log instead of sending it to Player, so a finished
-shift awards no progression unless that call is made by hand, as the Player and
-Session Postman collection does. See
+given its address and it does not learn of new applicants. `SessionCompleted`
+is connected: Session sends it to Player when a shift ends, and the shift is
+counted without anyone delivering the event by hand. See
 [integration status and verification](docs/gateway-integration.md).
 
 ### What you need

@@ -94,7 +94,8 @@ def main():
     parser.add_argument('--gateway-image', required=True)
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
-    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.2.0')
+    parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:2.1.0')
+    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.3.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0')
     parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0')
     parser.add_argument('--report', type=Path)
@@ -126,6 +127,7 @@ def main():
             'GATEWAY_IMAGE': args.gateway_image, 'SERVER_RULES_IMAGE': args.rules_image,
             'UNIVERSITY_RECORD_IMAGE': args.records_image, 'SESSION_IMAGE': args.session_image,
             'APPLICANT_IMAGE': args.applicant_image, 'CREDENTIAL_IMAGE': args.credential_image,
+            'PLAYER_IMAGE': args.player_image,
             'GATEWAY_HTTP_PORT': str(ports[0]), 'SESSION_WS_PORT': str(ports[1]), 'DM_WS_PORT': str(ports[2]),
             'SESSION_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[1]}',
             'DM_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[2]}',
@@ -340,6 +342,30 @@ def main():
                       call(public + '/moderation/decisions', 'POST', {
                           'sessionId': session_id, 'applicantId': next_applicant['applicantId'],
                           'moderatorId': moderator['playerId'], 'action': 'accept'}, session_auth)[0], 201)
+
+            # Ending the shift makes Session send SessionCompleted to Player
+            # over the internal port. Nothing here delivers it by hand.
+            check('Session ends the shift',
+                  call(public + f'/session/sessions/{session_id}/end', 'POST', None, session_auth)[0], 200)
+            time.sleep(1)
+            status, progression = call(
+                public + f"/player/players/{moderator['playerId']}/progression", headers=player_auth)
+            check('Player counted the shift without a hand-delivered event',
+                  progression.get('completedShifts') if status == 200 else status, 1)
+            # A retry carries a new eventId for the same shift; Player is
+            # idempotent on sessionId, so it must not be paid twice.
+            check('a duplicate SessionCompleted is ignored', internal(
+                '/player/internal/events/session-completed', 'POST', {
+                    'eventId': str(uuid.uuid4()), 'type': 'SessionCompleted',
+                    'occurredAt': datetime.now(timezone.utc).isoformat(),
+                    'sessionId': session_id,
+                    'payload': {'sessionId': session_id, 'perPlayer': [
+                        {'playerId': moderator['playerId'], 'xpAwarded': 999,
+                         'disciplinaryActions': 0}]}})[0], 200)
+            status, progression = call(
+                public + f"/player/players/{moderator['playerId']}/progression", headers=player_auth)
+            check('the duplicate awarded nothing',
+                  progression.get('completedShifts') if status == 200 else status, 1)
         finally:
             subprocess.run([*command, 'down', '-v', '--remove-orphans'], capture_output=True, text=True, timeout=120)
 

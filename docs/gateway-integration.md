@@ -386,8 +386,12 @@ run through the Gateway passed on this Compose with no failed assertion,
 Applicant and Credential 33 and Player and Session 60, using local builds of the
 commits `2.0.0` was published from.
 
-One path never used the broker and is still open: Session `2.2.0` writes
-`SessionCompleted` to its log (`LoggingSessionEventsPublisher`) and does not
-call Player's `POST /internal/events/session-completed`. Compose gives Session
-no Player address. The Player and Session Postman collection makes that call
-itself.
+That path is now connected. Session `2.3.0` sends `SessionCompleted` to
+Player's `POST /internal/events/session-completed` through `PLAYER_BASE_URL`
+when a shift ends, and Player `2.1.0` applies it at most once per `eventId`
+**and** per `sessionId`: without a broker a retry carries a fresh `eventId` for
+the same shift, which `eventId` alone would pay twice. A failure to send is
+logged and does not fail `end`, since the shift is already recorded.
+`verify_compose_gateway.py` checks all of it: the shift is counted with no
+hand-delivered event, and a duplicate carrying `xpAwarded: 999` awards
+nothing.
