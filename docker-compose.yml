@@ -71,7 +71,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: catalinasiminiuc/pad-player-service:2.0.0
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:2.1.0}
     depends_on:
       player-db:
         condition: service_healthy
@@ -109,7 +109,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.2.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.3.0}
     depends_on:
       session-db:
         condition: service_healthy
@@ -122,8 +122,9 @@ services:
       WS_PORT: 3011
       SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
-      # The three services Session calls, through the Gateway's internal
-      # listener. Marked internal in the contract, so reachable there only.
+      # The services Session calls, through the Gateway's internal listener.
+      # Marked internal in the contract, so reachable there only.
+      PLAYER_BASE_URL: http://gateway:8001/player
       APPLICANT_BASE_URL: http://gateway:8001/applicant
       SERVER_RULES_BASE_URL: http://gateway:8001/rules
       MODERATION_BASE_URL: http://gateway:8001/moderation

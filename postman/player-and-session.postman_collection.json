@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Player & Server Moderation Session",
-    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is called to the door, the shift ends, and the SessionCompleted event turns the result into XP. The shift currently scores zero: Session builds the result from Moderation's decision log, and Moderation cannot record a decision until Credential knows the applicant, which waits on ApplicantInitialized being delivered. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nEverything goes through the Gateway. A client sends Authorization: Bearer <token> and the Gateway validates it, drops the header and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request here sets those headers: the Gateway refuses to believe a caller who names itself, which the Gateway boundary folder checks.\n\nTwo base URLs, because a request's privileges come from the door it arrived at. gatewayBaseUrl is the published port, http://127.0.0.1:8080 from your machine. internalBaseUrl is http://gateway:8001, which is not published: it serves the endpoints the contract marks internal, the ones a service calls and a client may not. Reaching it means running inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run player-and-session.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000\n\nRun it from your machine instead and the story still runs, but the five internal requests cannot reach gateway:8001 and fail, along with the assertions downstream of them: scoring needs an outcome reported, and progression needs SessionCompleted delivered.\n\nWS /sessions/{id}/live cannot be part of a collection export. It is the one place a token is still checked by the service, because the client connects to it directly: POST /ws/negotiate at the Gateway returns the URL, ws://127.0.0.1:3011/sessions/<sessionId>/live, and the token goes in ?token= or Authorization. POST /internal/events/session-completed on Player takes SessionCompleted. Session does not send it yet, so this collection sends it itself, through the internal port.",
+    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is called to the door, the shift ends, and the SessionCompleted event turns the result into XP. The shift currently scores zero: Session builds the result from Moderation's decision log, and Moderation cannot record a decision until Credential knows the applicant, which waits on ApplicantInitialized being delivered. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nEverything goes through the Gateway. A client sends Authorization: Bearer <token> and the Gateway validates it, drops the header and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request here sets those headers: the Gateway refuses to believe a caller who names itself, which the Gateway boundary folder checks.\n\nTwo base URLs, because a request's privileges come from the door it arrived at. gatewayBaseUrl is the published port, http://127.0.0.1:8080 from your machine. internalBaseUrl is http://gateway:8001, which is not published: it serves the endpoints the contract marks internal, the ones a service calls and a client may not. Reaching it means running inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run player-and-session.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000\n\nRun it from your machine instead and the story still runs, but the five internal requests cannot reach gateway:8001 and fail, along with the assertions downstream of them: scoring needs an outcome reported, and progression needs SessionCompleted delivered.\n\nWS /sessions/{id}/live cannot be part of a collection export. It is the one place a token is still checked by the service, because the client connects to it directly: POST /ws/negotiate at the Gateway returns the URL, ws://127.0.0.1:3011/sessions/<sessionId>/live, and the token goes in ?token= or Authorization. POST /internal/events/session-completed on Player takes SessionCompleted, and Session sends it there itself when a shift ends. The Events folder checks that the shift was counted without anyone delivering the event by hand, then delivers it twice more, once with a new eventId and once with the same one, to show that neither is paid twice.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -1105,7 +1105,47 @@
       "name": "Events",
       "item": [
         {
-          "name": "Deliver SessionCompleted to Player",
+          "name": "The shift awarded progression by itself",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/progression",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "player",
+                "players",
+                "{{moderatorId}}",
+                "progression"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "// Nothing has delivered SessionCompleted by hand at this point: Session",
+                  "// sent it to Player when the shift ended, through the internal port.",
+                  "pm.test('the shift was counted without anyone delivering the event', () => {",
+                  "  pm.expect(pm.response.json().completedShifts).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A duplicate with a new eventId changes nothing",
           "request": {
             "method": "POST",
             "header": [
@@ -1137,7 +1177,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Kept in a variable so the redelivery below can reuse the same id.",
+                  "// A fresh id, so this is a different event for the same shift.",
+                  "// Kept in a variable so the next request can reuse it.",
                   "pm.collectionVariables.set('eventId', pm.variables.replaceIn('{{$guid}}'));"
                 ]
               }
@@ -1147,14 +1188,17 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200', () => pm.response.to.have.status(200));"
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "// Session already sent this shift when it ended. Player is idempotent",
+                  "// on sessionId, so a second delivery is accepted and ignored rather",
+                  "// than paid twice."
                 ]
               }
             }
           ]
         },
         {
-          "name": "Progression after the shift",
+          "name": "Progression after the duplicate",
           "request": {
             "method": "GET",
             "header": [
@@ -1183,17 +1227,16 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "// XP follows the score, which is zero until Moderation can record a",
-                  "// decision; the shift itself is still counted.",
-                  "pm.test('the shift was counted', () => pm.expect(body.completedShifts).to.eql(1));"
+                  "pm.test('still one shift after the duplicate', () => {",
+                  "  pm.expect(pm.response.json().completedShifts).to.eql(1);",
+                  "});"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Redelivery changes nothing",
+          "name": "The same eventId again changes nothing",
           "request": {
             "method": "POST",
             "header": [
