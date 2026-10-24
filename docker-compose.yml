@@ -52,6 +52,20 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # ---- Service Discovery ----
+  # Every service instance registers here on startup; Gateway reads the
+  # registry to spread requests across the instances of each service.
+  service-discovery:
+    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.0.0-rc.1}
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
+      # Every check is a logged request, so not more often than this.
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ---- Player Service ----
   player-db:
     image: postgres:17
