@@ -96,8 +96,8 @@ def main():
     parser.add_argument('--records-image', required=True)
     parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:2.2.0')
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.4.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.1')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0-rc.1')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     checks = []

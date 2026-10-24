@@ -351,7 +351,7 @@ services:
     restart: unless-stopped
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:2.0.0}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:3.0.0-rc.1}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -364,6 +364,8 @@ services:
       # UNIVERSITY_RECORD_URL (http://gateway:8001/records) joins it once
       # University Record accepts a story on POST /applicants.
       CREDENTIAL_URL: http://gateway:8001/credential
+      # Every replica registers here on startup as http://$HOSTNAME:80.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
     networks: [applicant, backend]
     restart: unless-stopped
 
@@ -386,7 +388,7 @@ services:
     restart: unless-stopped
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:2.0.0}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:3.0.0-rc.1}
     depends_on:
       credential-db:
         condition: service_healthy
@@ -398,6 +400,8 @@ services:
       CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
       # The same hand-over when Credential is the one that starts an applicant.
       APPLICANT_URL: http://gateway:8001/applicant
+      # Every replica registers here on startup as http://$HOSTNAME:80.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
     networks: [credential, backend]
     restart: unless-stopped
 
