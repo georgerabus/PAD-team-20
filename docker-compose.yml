@@ -85,7 +85,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:2.1.0}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:2.2.0}
     depends_on:
       player-db:
         condition: service_healthy
@@ -101,6 +101,12 @@ services:
       DB_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/player:/app/keys:ro
+    healthcheck:
+      # Exempt from the request limit, so a busy instance still answers.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks: [player, backend]
     restart: unless-stopped
 
@@ -123,7 +129,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.3.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.4.0}
     depends_on:
       session-db:
         condition: service_healthy
@@ -149,6 +155,12 @@ services:
       DB_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/session:/app/keys:ro
+    healthcheck:
+      # Exempt from the request limit, so a busy instance still answers.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     ports:
       - "127.0.0.1:${SESSION_WS_PORT:-3011}:3011"
     networks: [session, backend]
