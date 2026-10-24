@@ -809,7 +809,8 @@ again safely.
 which resolves on the container's networks, so every replica has its own
 address. Every service exposes the same `GET /status`; Service Discovery calls
 it at a fixed interval and removes an instance after three consecutive failed
-checks. A removed instance returns by registering again.
+checks. A removed instance returns by registering again. Applicant, Credential,
+Moderation and Discord DMs register today; see [Replicas](#replicas).
 
 ### Service-to-service calls
 
@@ -888,15 +889,53 @@ key, and only Session gets Session's private key. Gateway receives public keys;
 Discord DMs receives Session's public key for its WS handshake.
 
 `GATEWAY_HTTP_PORT` changes the published REST port; 8080 is the default, avoiding
-other local applications on 8000. `SESSION_WS_PORT` and `DM_WS_PORT` default to
-3011 and 3002. Each is a WebSocket-only listener of its own service, so ordinary
-HTTP requests reach no route on either: both answer `426 UPGRADE_REQUIRED`.
+other local applications on 8000. `SESSION_WS_PORT` defaults to 3011. Discord DMs
+publishes one port per replica, from `DM_WS_PORT` to `DM_WS_PORT_LAST` (3002 to
+3004 by default; see [Replicas](#replicas)). Each is a WebSocket-only listener of
+its own service, so ordinary HTTP requests reach no route on either: both answer
+`426 UPGRADE_REQUIRED`.
 
 All published ports bind to loopback for the local presentation.
 
 Services call `http://gateway:8001/<prefix>/...`. Port 8001 is never published
 on the host. Gateway upstreams use the container ports: DM and Moderation are
 both on port 3000, regardless of their former host ports.
+
+### Replicas
+
+Applicant, Credential, Moderation and Discord DMs run two replicas each, set by
+`APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`, `MODERATION_REPLICAS` and
+`DM_REPLICAS`. Every replica registers with Service Discovery on startup as
+`http://<container hostname>:<port>`, so each is listed under its own address.
+Replicas can be added and removed while the system runs, with no other step:
+
+```bash
+# Add a third Moderation replica: it registers within seconds.
+docker compose up -d --no-deps --scale moderation-service=3 moderation-service
+# Back to one: the stopped replicas fail three health checks, about 30 seconds,
+# and Service Discovery drops them.
+docker compose up -d --no-deps --scale moderation-service=1 moderation-service
+# The registry, from inside the network (Service Discovery publishes no port):
+docker compose exec gateway python -c "import urllib.request; print(urllib.request.urlopen('http://service-discovery:8000/services').read().decode())"
+```
+
+Every replica of a service shares that service's database, and none keeps state
+of its own that the others need. Discord DMs is the one with live state, its
+sockets: replicas pass every new message and every presence change to each other
+through PostgreSQL `LISTEN`/`NOTIFY`, so a client sees the same channel whichever
+replica holds its socket. Each replica publishes its own WebSocket port from the
+`DM_WS_PORT`–`DM_WS_PORT_LAST` range, which must hold at least `DM_REPLICAS`
+ports; the first replica takes the first port, which is the address
+`/ws/negotiate` hands out.
+
+Gateway still reaches each service by its Compose name, which Docker resolves to
+every replica's address. Reading the instances from Service Discovery and
+spreading requests round-robin is the next step, in the Gateway.
+
+Player, Session, Server Rules and University Record run one replica each until
+their images register with Service Discovery. Session also needs its live
+broadcast to reach the sockets of every replica, as Discord DMs does, and a port
+per replica like `DM_WS_PORT`.
 
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
@@ -945,7 +984,11 @@ evidence for this deployment.
 The test starts its own fresh Compose project and removes only its temporary
 resources. It hands Credential one known document for the sharing checks and
 separately checks that a new applicant reaches Credential and University
-Record, so a missing hand-over remains a failure.
+Record, so a missing hand-over remains a failure. It runs two replicas of each
+registered service and checks that every replica is listed in Service Discovery
+and answers its `/status`, that a socket on one Discord DMs replica sees
+presence and messages from the other, and that a Moderation replica added at
+runtime registers and stopped ones drop out.
 
 ### Images
 

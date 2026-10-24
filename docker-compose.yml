@@ -185,7 +185,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: augustinploteanu/pad-dm-service:2.2.0
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:3.1.0}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -204,15 +204,22 @@ services:
       SESSION_URL: http://gateway:8001/session
       CREDENTIAL_URL: http://gateway:8001/credential
       UNIVERSITY_RECORD_URL: http://gateway:8001/records
+      # Every replica registers here on startup as http://$HOSTNAME:3000.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
+    deploy:
+      replicas: ${DM_REPLICAS:-2}
+    # One host port per replica, taken from the range in order, so the range
+    # must hold at least DM_REPLICAS ports. Every replica serves every channel
+    # (they share messages and presence through dm-db), so the address
+    # /ws/negotiate hands out, the first port, reaches all of them.
     ports:
-      - "127.0.0.1:${DM_WS_PORT:-3002}:3001"
+      - "127.0.0.1:${DM_WS_PORT:-3002}-${DM_WS_PORT_LAST:-3004}:3001"
     networks: [dm, backend]
-    # Healthy once the WebSocket listener answers ordinary HTTP with its 426,
-    # so `up --wait` and dependants do not reach DM while it is still starting.
+    # Exempt from the request limit, so a busy replica still answers.
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode === 426 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -237,7 +244,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: augustinploteanu/pad-moderation-service:2.2.0
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:3.0.0}
     depends_on:
       moderation-db:
         condition: service_healthy
@@ -252,10 +259,14 @@ services:
       CREDENTIAL_URL: http://gateway:8001/credential
       SERVER_RULES_URL: http://gateway:8001/rules
       SESSION_URL: http://gateway:8001/session
+      # Every replica registers here on startup as http://$HOSTNAME:3000.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    deploy:
+      replicas: ${MODERATION_REPLICAS:-2}
     networks: [moderation, backend]
-    # Healthy once REST answers at all (401 without identity headers).
+    # Exempt from the request limit, so a busy replica still answers.
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/decisions/up', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -366,6 +377,8 @@ services:
       CREDENTIAL_URL: http://gateway:8001/credential
       # Every replica registers here on startup as http://$HOSTNAME:80.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    deploy:
+      replicas: ${APPLICANT_REPLICAS:-2}
     networks: [applicant, backend]
     restart: unless-stopped
 
@@ -402,6 +415,8 @@ services:
       APPLICANT_URL: http://gateway:8001/applicant
       # Every replica registers here on startup as http://$HOSTNAME:80.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    deploy:
+      replicas: ${CREDENTIAL_REPLICAS:-2}
     networks: [credential, backend]
     restart: unless-stopped
 

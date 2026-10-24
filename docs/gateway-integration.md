@@ -395,3 +395,28 @@ logged and does not fail `end`, since the shift is already recorded.
 `verify_compose_gateway.py` checks all of it: the shift is counted with no
 hand-delivered event, and a duplicate carrying `xpAwarded: 999` awards
 nothing.
+
+
+### Replicas and Service Discovery (Lab 3)
+
+Applicant, Credential, Moderation and Discord DMs run two replicas each, and
+every replica registers with Service Discovery as `http://<hostname>:<port>`.
+Discord DMs `3.1.0` and Moderation `3.0.0` add the shared `GET /status` and
+registration; Compose health-checks both through `/status`. Discord DMs
+publishes one WebSocket port per replica from the `DM_WS_PORT`–`DM_WS_PORT_LAST`
+range, and its replicas share new messages and presence through PostgreSQL
+`LISTEN`/`NOTIFY`, so `/ws/negotiate` keeps handing out the first port.
+
+The shared suite passed 82/83 with Rules and Records `2.0.0-rc.3`, Player
+`2.2.0`, Session `2.4.0`, Applicant, Credential and Service Discovery
+`3.0.0-rc.1`, DM `3.1.0`, Moderation `3.0.0` and the published Gateway `2.0.0`.
+The new checks all passed: every replica is listed and answers its `/status`, a
+socket on one DM replica sees presence and a message from the other, and a
+Moderation replica added at runtime registers while stopped ones drop out of the
+registry. The one failure is the known one, "a new Applicant reaches University
+Record" (404).
+
+Player, Session, Server Rules and University Record still run one replica,
+until their images register with Service Discovery. Gateway still reaches
+services by their Compose names; reading Service Discovery and balancing
+round-robin is the Gateway's next step.
