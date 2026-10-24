@@ -14,8 +14,9 @@ A game set in a university Discord server where a moderation team decides who ge
 
 ## Service Boundaries
 
-The system has eight domain services and a Gateway that routes and authenticates
-REST requests. Each domain service owns its own data and business rules.
+The system has eight domain services, a Gateway that routes and authenticates
+REST requests, and a Service Discovery that keeps track of their running
+instances. Each domain service owns its own data and business rules.
 
 ### 1. Player Service
 Responsible for the identity of the players. Stores accounts, authentication, profiles, friends and XP/Levels. Tracks persistent player progression through leveling, based on moderator experience, completed shifts and disciplinary actions.
@@ -59,6 +60,14 @@ Python / FastAPI. Validates Player and Session tokens, forwards caller identity
 without Authorization, separates public and internal REST, and applies task
 timeout and concurrency limits. It owns no domain database. Its authenticated
 `POST /ws/negotiate` endpoint returns the direct Session or DM WebSocket URL.
+
+### 10. Service Discovery
+
+Python / FastAPI. Keeps the registry of running service instances. Every
+instance registers its own address on startup, Gateway reads the registry to
+spread requests across the instances of a service, and Service Discovery calls
+every instance's `GET /status` at a fixed interval, removing the ones that stop
+answering. It owns no database: the registry is held in memory.
 
 ## Architecture Diagram
 
@@ -174,6 +183,7 @@ contract, which is the one thing Lab 0 exists to force us to get right.
 | Moderation | TypeScript / NestJS | PostgreSQL | REST | Decides and scores the admission from Applicant, Credential and Rules |
 | Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST | Real-time per-session chat |
 | Gateway | Python / FastAPI | None | REST, WS URL negotiation | Validates tokens, routes and limits requests |
+| Service Discovery | Python / FastAPI | None | REST | Registry of running instances and their health checks |
 
 Two communication patterns are in use, each where it fits:
 
@@ -781,6 +791,26 @@ server → client:
 { "type":"error", "code":"enum(CHANNEL_ACCESS_DENIED|SHARE_DENIED)" }
 ```
 
+### Service Discovery
+
+Reached directly at `http://service-discovery:8000` on the `backend` network,
+not through the Gateway. Every instance registers on startup and may register
+again safely.
+
+| Method & path | Request | Response |
+|---|---|---|
+| `POST /register` `[REST]` | `{name, url}` | `201 {name, url}` \| `200` if already registered \| `422` |
+| `GET /services` `[REST]` | — | `200 {name: [url]}` |
+| `GET /services/{name}` `[REST]` | — | `200 {name, instances: [url]}` |
+| `GET /status` `[REST]` | — | `200 {status, load: {inFlight, limit}}` |
+
+`name` is the service's Gateway prefix, such as `applicant`. `url` is
+`http://$HOSTNAME:<port>`: Docker sets `HOSTNAME` to the container's short ID,
+which resolves on the container's networks, so every replica has its own
+address. Every service exposes the same `GET /status`; Service Discovery calls
+it at a fixed interval and removes an instance after three consecutive failed
+checks. A removed instance returns by registering again.
+
 ### Service-to-service calls
 
 Every call between services is synchronous REST through the Gateway's internal
@@ -805,8 +835,9 @@ port. There is no broker.
 
 ## Running the System
 
-The common `docker-compose.yml` starts Gateway, the eight domain services,
-their separate PostgreSQL databases and a WS-only edge. Domain REST ports and
+The common `docker-compose.yml` starts Gateway, Service Discovery, the eight
+domain services, their separate PostgreSQL databases and a WS-only edge.
+Service Discovery publishes no port. Domain REST ports and
 all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
