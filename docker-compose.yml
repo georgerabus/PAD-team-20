@@ -56,7 +56,13 @@ services:
   # Every service instance registers here on startup; Gateway reads the
   # registry to spread requests across the instances of each service.
   service-discovery:
-    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.0.0-rc.1}
+    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.1.0}
+    environment:
+      # An instance is called critical at this share of its own limit, and the
+      # alert is logged. With a webhook set it is also sent there; unset, the
+      # log is the only record.
+      LOAD_CRITICAL_RATIO: ${LOAD_CRITICAL_RATIO:-0.8}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
     networks: [backend]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
