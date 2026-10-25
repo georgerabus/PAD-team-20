@@ -85,7 +85,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:2.2.0}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:3.0.0}
     depends_on:
       player-db:
         condition: service_healthy
@@ -94,6 +94,8 @@ services:
       JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
       SESSION_BASE_URL: http://gateway:8001/session
+      # Every replica registers here on startup as http://$HOSTNAME:3000.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
       DB_HOST: player-db
       DB_PORT: 5432
       DB_NAME: player
@@ -101,6 +103,8 @@ services:
       DB_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/player:/app/keys:ro
+    deploy:
+      replicas: ${PLAYER_REPLICAS:-2}
     healthcheck:
       # Exempt from the request limit, so a busy instance still answers.
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
@@ -129,7 +133,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.4.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:3.0.0}
     depends_on:
       session-db:
         condition: service_healthy
@@ -148,6 +152,8 @@ services:
       APPLICANT_BASE_URL: http://gateway:8001/applicant
       SERVER_RULES_BASE_URL: http://gateway:8001/rules
       MODERATION_BASE_URL: http://gateway:8001/moderation
+      # Every replica registers here on startup as http://$HOSTNAME:3001.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
       DB_HOST: session-db
       DB_PORT: 5432
       DB_NAME: session
@@ -163,6 +169,11 @@ services:
       retries: 10
     ports:
       - "127.0.0.1:${SESSION_WS_PORT:-3011}:3011"
+    # One replica on purpose. WS /sessions/{id}/live keeps its watchers in
+    # memory, so a second replica would push shift_started only to the
+    # watchers that happen to be connected to the replica handling the REST
+    # call. Scaling this service needs those broadcasts to cross instances
+    # first; registering it is already useful, and REST is instance-agnostic.
     networks: [session, backend]
     restart: unless-stopped
 

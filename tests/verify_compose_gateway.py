@@ -177,8 +177,8 @@ def main():
     parser.add_argument('--gateway-image', required=True)
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
-    parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:2.2.0')
-    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.4.0')
+    parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
+    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.0.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.1')
     parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0-rc.1')
     parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:3.1.0')
@@ -209,7 +209,10 @@ def main():
 
         # Two replicas of each service that registers with Service Discovery.
         # DM publishes one WebSocket port per replica, so it gets a range.
-        replicas = {'dm': 2, 'moderation': 2, 'applicant': 2, 'credential': 2}
+        replicas = {'player': 2, 'dm': 2, 'moderation': 2, 'applicant': 2, 'credential': 2}
+        # Session stays at one: its WebSocket keeps watchers in memory, so a
+        # second replica would push events to only some of them.
+        single = {'session': 1}
         # From one range, so no port picked later can fall inside DM's.
         free = free_port_range(2 + replicas['dm'] + 1)
         dm_ports = free[2:]
@@ -222,7 +225,7 @@ def main():
             'DM_IMAGE': args.dm_image, 'MODERATION_IMAGE': args.moderation_image,
             'GATEWAY_HTTP_PORT': str(ports[0]), 'SESSION_WS_PORT': str(ports[1]),
             'DM_WS_PORT': str(dm_ports[0]), 'DM_WS_PORT_LAST': str(dm_ports[-1]),
-            'DM_REPLICAS': str(replicas['dm']), 'MODERATION_REPLICAS': str(replicas['moderation']),
+            'PLAYER_REPLICAS': str(replicas['player']), 'DM_REPLICAS': str(replicas['dm']), 'MODERATION_REPLICAS': str(replicas['moderation']),
             'APPLICANT_REPLICAS': str(replicas['applicant']), 'CREDENTIAL_REPLICAS': str(replicas['credential']),
             'SESSION_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[1]}',
             'DM_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[2]}',
@@ -277,7 +280,8 @@ def main():
                   [p['target'] for p in config['services']['dm-service']['ports']], [3001])
             check('Player calls Session through internal Gateway',
                   config['services']['player']['environment']['SESSION_BASE_URL'], 'http://gateway:8001/session')
-            for name, service in (('dm', 'dm-service'), ('moderation', 'moderation-service'),
+            for name, service in (('player', 'player'), ('dm', 'dm-service'),
+                                  ('moderation', 'moderation-service'),
                                   ('applicant', 'applicant'), ('credential', 'credential')):
                 check(f'{service} runs {replicas[name]} replicas',
                       config['services'][service].get('deploy', {}).get('replicas'), replicas[name])
@@ -318,9 +322,14 @@ def main():
             check('Gateway health', call(public + '/up')[0], 200)
             # Every replica is listed under its own address and answers its
             # health check with the shared /status body.
-            for name, port in (('dm', 3000), ('moderation', 3000), ('applicant', 80), ('credential', 80)):
-                instances = wait_registered(name, replicas[name], 60)
-                check(f'every {name} replica registers with Service Discovery', len(set(instances)), replicas[name])
+            check('session registers with Service Discovery',
+                  config['services']['session']['environment'].get('SERVICE_DISCOVERY_URL'),
+                  'http://service-discovery:8000')
+            for name, port in (('player', 3000), ('session', 3001), ('dm', 3000),
+                               ('moderation', 3000), ('applicant', 80), ('credential', 80)):
+                expected = replicas.get(name, single.get(name, 1))
+                instances = wait_registered(name, expected, 60)
+                check(f'every {name} replica registers with Service Discovery', len(set(instances)), expected)
                 check(f'{name} replicas register as http://<hostname>:{port}',
                       all(re.fullmatch(rf'http://[a-z0-9-]+:{port}', url) for url in instances), True)
                 for url in instances:
