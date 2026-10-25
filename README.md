@@ -915,9 +915,10 @@ both on port 3000, regardless of their former host ports.
 
 ### Replicas
 
-Player, Applicant, Credential, Moderation and Discord DMs run two replicas
-each, set by `PLAYER_REPLICAS`, `APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`,
-`MODERATION_REPLICAS` and `DM_REPLICAS`. Every replica registers with Service Discovery on startup as
+Player, Session, Applicant, Credential, Moderation and Discord DMs run two
+replicas each, set by `PLAYER_REPLICAS`, `SESSION_REPLICAS`,
+`APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`, `MODERATION_REPLICAS` and
+`DM_REPLICAS`. Every replica registers with Service Discovery on startup as
 `http://<container hostname>:<port>`, so each is listed under its own address.
 Replicas can be added and removed while the system runs, with no other step:
 
@@ -932,13 +933,17 @@ docker compose exec gateway python -c "import urllib.request; print(urllib.reque
 ```
 
 Every replica of a service shares that service's database, and none keeps state
-of its own that the others need. Discord DMs is the one with live state, its
-sockets: replicas pass every new message and every presence change to each other
-through PostgreSQL `LISTEN`/`NOTIFY`, so a client sees the same channel whichever
-replica holds its socket. Each replica publishes its own WebSocket port from the
-`DM_WS_PORT`–`DM_WS_PORT_LAST` range, which must hold at least `DM_REPLICAS`
-ports; the first replica takes the first port, which is the address
-`/ws/negotiate` hands out.
+of its own that the others need. The two with live state are the ones holding
+sockets, Discord DMs and Session, and both pass that state through PostgreSQL
+`LISTEN`/`NOTIFY`: DM every new message and presence change, Session every live
+event of a shift. So a client sees the same channel, and a watcher the same
+shift, whichever replica holds its socket.
+
+Each publishes one WebSocket port per replica, from `DM_WS_PORT` to
+`DM_WS_PORT_LAST` and from `SESSION_WS_PORT` to `SESSION_WS_PORT_LAST`. Each
+range must hold at least that service's replica count. The first replica takes
+the first port, which is the address `/ws/negotiate` hands out; because the
+events reach every replica, that one address serves all of them.
 
 Gateway still reaches each service by its Compose name, which Docker resolves to
 every replica's address. Reading the instances from Service Discovery and
@@ -946,13 +951,6 @@ spreading requests round-robin is the next step, in the Gateway.
 
 Server Rules and University Record run one replica each until their images
 register with Service Discovery.
-
-Session registers but runs one replica for a different reason: its live
-broadcast still keeps watchers in memory, so a second replica would push
-`shift_started` only to the watchers connected to whichever replica handled the
-REST call. It needs the same treatment Discord DMs already has — the broadcast
-reaching the sockets of every replica through `LISTEN`/`NOTIFY` — and a port
-per replica like `DM_WS_PORT`. Its REST is instance-agnostic already.
 
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
