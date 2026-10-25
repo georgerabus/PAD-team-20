@@ -139,7 +139,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:3.0.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:3.1.0}
     depends_on:
       session-db:
         condition: service_healthy
@@ -173,13 +173,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      replicas: ${SESSION_REPLICAS:-2}
+    # One published port per replica, taken from the range in order, so the
+    # range must hold at least SESSION_REPLICAS ports. Live events reach the
+    # watchers of every replica through the database, so the address
+    # /ws/negotiate hands out, the first port, serves all of them.
     ports:
-      - "127.0.0.1:${SESSION_WS_PORT:-3011}:3011"
-    # One replica on purpose. WS /sessions/{id}/live keeps its watchers in
-    # memory, so a second replica would push shift_started only to the
-    # watchers that happen to be connected to the replica handling the REST
-    # call. Scaling this service needs those broadcasts to cross instances
-    # first; registering it is already useful, and REST is instance-agnostic.
+      - "127.0.0.1:${SESSION_WS_PORT:-3011}-${SESSION_WS_PORT_LAST:-3013}:3011"
     networks: [session, backend]
     restart: unless-stopped
 
