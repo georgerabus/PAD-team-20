@@ -177,6 +177,7 @@ def main():
     parser.add_argument('--gateway-image', required=True)
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
+    parser.add_argument('--service-discovery-image')
     parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.0.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.1')
@@ -222,6 +223,10 @@ def main():
             'UNIVERSITY_RECORD_IMAGE': args.records_image, 'SESSION_IMAGE': args.session_image,
             'APPLICANT_IMAGE': args.applicant_image, 'CREDENTIAL_IMAGE': args.credential_image,
             'PLAYER_IMAGE': args.player_image,
+            # Only when given: otherwise Compose's own pin is used, which is
+            # what a released Service Discovery should be checked against.
+            **({'SERVICE_DISCOVERY_IMAGE': args.service_discovery_image}
+               if args.service_discovery_image else {}),
             'DM_IMAGE': args.dm_image, 'MODERATION_IMAGE': args.moderation_image,
             'GATEWAY_HTTP_PORT': str(ports[0]), 'SESSION_WS_PORT': str(ports[1]),
             'DM_WS_PORT': str(dm_ports[0]), 'DM_WS_PORT_LAST': str(dm_ports[-1]),

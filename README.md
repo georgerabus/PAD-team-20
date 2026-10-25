@@ -809,8 +809,20 @@ again safely.
 which resolves on the container's networks, so every replica has its own
 address. Every service exposes the same `GET /status`; Service Discovery calls
 it at a fixed interval and removes an instance after three consecutive failed
-checks. A removed instance returns by registering again. Applicant, Credential,
-Moderation and Discord DMs register today; see [Replicas](#replicas).
+checks. A removed instance returns by registering again.
+
+The same answer says how loaded the instance is, which is a separate question
+from whether it is alive: one reporting `49/50` requests in flight is healthy
+and about to stop being useful. Service Discovery alerts when any capacity an
+instance reports reaches `LOAD_CRITICAL_RATIO` of its own limit, and again when
+it comes back under. The judgement is made there rather than by each service,
+so one threshold covers all of them. A critical instance is never removed:
+busy is the opposite of broken. With `ALERT_WEBHOOK_URL` set the alerts are
+also posted to a Discord webhook; unset, they are only logged.
+
+Player, Session, Applicant, Credential, Moderation and Discord DMs register
+today. Server Rules and University Record do not yet, and neither does the
+Gateway, so nothing watches those three. See [Replicas](#replicas).
 
 ### Service-to-service calls
 
@@ -903,9 +915,9 @@ both on port 3000, regardless of their former host ports.
 
 ### Replicas
 
-Applicant, Credential, Moderation and Discord DMs run two replicas each, set by
-`APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`, `MODERATION_REPLICAS` and
-`DM_REPLICAS`. Every replica registers with Service Discovery on startup as
+Player, Applicant, Credential, Moderation and Discord DMs run two replicas
+each, set by `PLAYER_REPLICAS`, `APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`,
+`MODERATION_REPLICAS` and `DM_REPLICAS`. Every replica registers with Service Discovery on startup as
 `http://<container hostname>:<port>`, so each is listed under its own address.
 Replicas can be added and removed while the system runs, with no other step:
 
@@ -932,10 +944,15 @@ Gateway still reaches each service by its Compose name, which Docker resolves to
 every replica's address. Reading the instances from Service Discovery and
 spreading requests round-robin is the next step, in the Gateway.
 
-Player, Session, Server Rules and University Record run one replica each until
-their images register with Service Discovery. Session also needs its live
-broadcast to reach the sockets of every replica, as Discord DMs does, and a port
-per replica like `DM_WS_PORT`.
+Server Rules and University Record run one replica each until their images
+register with Service Discovery.
+
+Session registers but runs one replica for a different reason: its live
+broadcast still keeps watchers in memory, so a second replica would push
+`shift_started` only to the watchers connected to whichever replica handled the
+REST call. It needs the same treatment Discord DMs already has — the broadcast
+reaching the sockets of every replica through `LISTEN`/`NOTIFY` — and a port
+per replica like `DM_WS_PORT`. Its REST is instance-agnostic already.
 
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
