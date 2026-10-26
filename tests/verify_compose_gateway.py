@@ -71,16 +71,11 @@ def call(url, method='GET', body=None, headers=None):
         return response.status, decode(response.read().decode())
 
 
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
-
-
 def free_port_range(count):
     """`count` consecutive free loopback ports, for a service with replicas."""
     while True:
-        first = free_port()
+        # Stay below the usual ephemeral range used by outgoing connections.
+        first = 10000 + secrets.randbelow(20000 - count + 1)
         socks = []
         try:
             for port in range(first, first + count):
@@ -180,8 +175,8 @@ def main():
     parser.add_argument('--service-discovery-image')
     parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.1.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.1')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0-rc.1')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.2')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0-rc.2')
     parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:3.1.0')
     parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:3.0.0')
     parser.add_argument('--report', type=Path)
@@ -213,11 +208,10 @@ def main():
         # a range.
         replicas = {'player': 2, 'session': 2, 'dm': 2, 'moderation': 2,
                     'applicant': 2, 'credential': 2}
-        # Gateway, then one port per Session replica, then one per DM replica,
-        # each range with a spare. From one block, so no port picked later can
-        # fall inside another's range.
-        session_count = replicas['session'] + 1
-        free = free_port_range(1 + session_count + replicas['dm'] + 1)
+        # Exact-size ranges keep the advertised first WS port occupied; Docker
+        # can leave it unused when a range has a spare. One block avoids overlap.
+        session_count = replicas['session']
+        free = free_port_range(1 + session_count + replicas['dm'])
         session_ports = free[1:1 + session_count]
         dm_ports = free[1 + session_count:]
         ports = [free[0], session_ports[0], dm_ports[0]]
@@ -319,6 +313,7 @@ def main():
                     container = json.loads(row)
                     if container['State'] != 'running' or container.get('Health') == 'unhealthy':
                         service = container['Service']
+                        print(run(['docker', 'inspect', container['Name'], '--format', '{{json .State}}']), flush=True)
                         print(compose('logs', '--no-color', '--tail', '35', service), flush=True)
                 raise
             deadline = time.monotonic() + 40
@@ -330,6 +325,11 @@ def main():
                     raise RuntimeError('Player did not become ready through Gateway')
                 time.sleep(0.5)
             check('Gateway health', call(public + '/up')[0], 200)
+            for row in compose('ps', '--format', 'json').splitlines():
+                container = json.loads(row)
+                if container['Service'] in ('session', 'dm-service'):
+                    published = [p for p in container.get('Publishers', []) if p['PublishedPort']]
+                    print(f"{container['Name']} publishes: {published}", flush=True)
             # Every replica is listed under its own address and answers its
             # health check with the shared /status body.
             check('session registers with Service Discovery',
@@ -347,6 +347,22 @@ def main():
                     check(f'{name} replica answers its /status with load',
                           (status, sorted(body.get('load', {}))) if isinstance(body, dict) else status,
                           (200, ['inFlight', 'limit']))
+            applicant_instances = registered('applicant')
+            if len(applicant_instances) == replicas['applicant']:
+                target = applicant_instances[0]
+                removal = '/services/applicant/instances'
+                discovery = 'http://service-discovery:8000'
+                removed = (200, {'name': 'applicant', 'url': target})
+                check('a caller can remove one Applicant instance from SD',
+                      internal(removal, 'DELETE', {'url': target}, base=discovery), removed)
+                check('the other Applicant replica stays registered',
+                      sorted(registered('applicant')), sorted(applicant_instances[1:]))
+                check('repeating caller-requested SD removal is safe',
+                      internal(removal, 'DELETE', {'url': target}, base=discovery), removed)
+                check('a removed Applicant instance can register again',
+                      internal('/register', 'POST', {'name': 'applicant', 'url': target}, base=discovery)[0], 201)
+                check('all Applicant replicas are restored before the game checks',
+                      sorted(registered('applicant')), sorted(applicant_instances))
             check('protected REST refuses forged headers without token',
                   call(public + '/player/players/' + str(uuid.uuid4()), headers={'X-Player-Id': str(uuid.uuid4())})[0], 401)
             check('public listener refuses internal session creation',
@@ -357,8 +373,18 @@ def main():
                 ('Session', ports[1], '/sessions/' + str(uuid.uuid4()), 426),
                 ('DM', ports[2], '/sessions/' + str(uuid.uuid4()) + '/channels', 426),
             ):
+                # REST health can pass before the separate published WS listener is ready.
+                deadline = time.monotonic() + 10
+                while True:
+                    try:
+                        status, _ = call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.25)
                 check(f'WS-only port {name} rejects ordinary REST',
-                      call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})[0], expected)
+                      status, expected)
 
             accounts = []
             for role in ('moderator', 'junior'):
@@ -562,6 +588,7 @@ def main():
         'applicant': args.applicant_image, 'credential': args.credential_image,
         'rules': args.rules_image, 'records': args.records_image,
         'player': config['services']['player']['image'],
+        'service_discovery': config['services']['service-discovery']['image'],
         'dm': args.dm_image, 'moderation': args.moderation_image,
     }, 'checks': checks}
     if args.report:

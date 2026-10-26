@@ -56,7 +56,7 @@ services:
   # Every service instance registers here on startup; Gateway reads the
   # registry to spread requests across the instances of each service.
   service-discovery:
-    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.1.0}
+    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.2.0-rc.1}
     environment:
       # An instance is called critical at this share of its own limit, and the
       # alert is logged. With a webhook set it is also sent there; unset, the
@@ -85,6 +85,8 @@ services:
     networks: [player]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U player -d player"]
+      # Fresh-volume initialization can still be finishing its final checkpoint.
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
@@ -133,6 +135,7 @@ services:
     networks: [session]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U session -d session"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
@@ -197,6 +200,7 @@ services:
     networks: [dm]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dm -d dm"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
@@ -256,6 +260,7 @@ services:
     networks: [moderation]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U moderation -d moderation"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
@@ -302,6 +307,7 @@ services:
     networks: [server-rules]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U server_rules -d server_rules"]
+      start_period: 60s
       interval: 3s
       timeout: 3s
       retries: 20
@@ -337,6 +343,7 @@ services:
     networks: [university-record]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U university_record -d university_record"]
+      start_period: 60s
       interval: 3s
       timeout: 3s
       retries: 20
@@ -374,13 +381,14 @@ services:
     networks: [applicant]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U applicant -d applicant"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:3.0.0-rc.1}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:3.0.0-rc.2}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -413,13 +421,14 @@ services:
     networks: [credential]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U credential -d credential"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:3.0.0-rc.1}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:3.0.0-rc.2}
     depends_on:
       credential-db:
         condition: service_healthy

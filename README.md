@@ -802,6 +802,7 @@ again safely.
 | `POST /register` `[REST]` | `{name, url}` | `201 {name, url}` \| `200` if already registered \| `422` |
 | `GET /services` `[REST]` | — | `200 {name: [url]}` |
 | `GET /services/{name}` `[REST]` | — | `200 {name, instances: [url]}` |
+| `DELETE /services/{name}/instances` `[REST]` | `{url}` | `200 {name, url}` even if already absent \| `422` |
 | `GET /status` `[REST]` | — | `200 {status, load: {inFlight, limit}}` |
 
 `name` is the service's Gateway prefix, such as `applicant`. `url` is
@@ -810,6 +811,12 @@ which resolves on the container's networks, so every replica has its own
 address. Every service exposes the same `GET /status`; Service Discovery calls
 it at a fixed interval and removes an instance after three consecutive failed
 checks. A removed instance returns by registering again.
+
+The caller-requested removal endpoint deletes only the matching instance of
+that service; other replicas stay registered. It does not stop the container
+or prevent re-registration. The Gateway's breaker must keep its own
+per-instance cooldown even if that instance registers again. This API enables
+the Grade 10 integration; the Gateway still needs to implement that behavior.
 
 The same answer says how loaded the instance is, which is a separate question
 from whether it is alive: one reporting `49/50` requests in flight is healthy
@@ -1030,6 +1037,12 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t <username>/<service-name>:<version> --push .
 ```
 
+For Lab 3 integration, SD, Applicant and Credential use candidate tags built
+from their tested `dev` commits. Their final release PRs stay as drafts until
+the lab is ready to present. The exact commits, image digests and current
+integration result are in [the candidate report](docs/lab3-candidate-integration.md).
+Manual candidate publication does not replace the required release CI run.
+
 ## GitHub Workflow
 
 ### Branch Strategy
@@ -1057,7 +1070,7 @@ chore/setup-submodules
 ### Merge Strategy
 
 - **Into `dev`:** feature branches are squashed, so `dev` gains one commit per finished task
-- **Into `master`:** `dev` is squashed in, and only once a lab is ready to present
+- **Into `master`:** `dev` is merged with a merge commit, and only once a lab is ready to present
 - **Approvals:** every pull request needs at least one teammate's sign-off
 
 ### Pull request contents
