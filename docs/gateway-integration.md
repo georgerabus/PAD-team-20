@@ -1,5 +1,9 @@
 # Common Gateway integration
 
+For the current Lab 3 candidates and checks, see
+[Lab 3 candidate integration](lab3-candidate-integration.md). The runs below
+record earlier deployment history and their image versions.
+
 Verified on 8 October 2026. This is the integration work on
 `feat/gateway-service-integration`, based on CPR `dev` at `9c41b8a`. That work is now merged into the common repository; the results below remain
 a historical run, not a new verification of Session 2.1.0. Container startup and functioning
