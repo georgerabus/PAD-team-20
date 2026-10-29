@@ -314,6 +314,9 @@ services:
   server-rules:
     image: ${SERVER_RULES_IMAGE:?set SERVER_RULES_IMAGE to a Gateway-compatible repository:tag}
     environment:
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      SD_SERVICE_NAME: rules
+      SD_REGISTER_INTERVAL_SECONDS: ${SD_REGISTER_INTERVAL_SECONDS:-30}
       APP_ENV: production
       APP_DEBUG: "false"
       APP_KEY: ${SERVER_RULES_APP_KEY:?Set SERVER_RULES_APP_KEY in .env}
@@ -330,6 +333,14 @@ services:
     depends_on:
       server-rules-db:
         condition: service_healthy
+    deploy:
+      replicas: ${SERVER_RULES_REPLICAS:-2}
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/status') === false ? 1 : 0);"]
+      start_period: 60s
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks: [server-rules, backend]
   university-record-db:
     image: postgres:17-bookworm
@@ -350,6 +361,9 @@ services:
   university-record:
     image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
     environment:
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      SD_SERVICE_NAME: records
+      SD_REGISTER_INTERVAL_SECONDS: ${SD_REGISTER_INTERVAL_SECONDS:-30}
       APP_ENV: production
       APP_DEBUG: "false"
       APP_KEY: ${UNIVERSITY_RECORD_APP_KEY:?Set UNIVERSITY_RECORD_APP_KEY in .env}
@@ -366,6 +380,14 @@ services:
     depends_on:
       university-record-db:
         condition: service_healthy
+    deploy:
+      replicas: ${UNIVERSITY_RECORD_REPLICAS:-2}
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/status') === false ? 1 : 0);"]
+      start_period: 60s
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks: [university-record, backend]
 
   # ---- Applicant Service ----
