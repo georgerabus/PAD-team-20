@@ -28,3 +28,22 @@ Current CPR dev has no broker/workers. Preserve that architecture. Private
 repositories still contain legacy event code; the Records HTTP handover debt
 is separate. Do not stage unrelated submodule state or restore old Compose
 from stash over current dev.
+
+## Published candidate follow-up
+
+The owner published the tested feature commits without merging main/dev or
+updating latest. The publication script confirmed linux/amd64 and linux/arm64.
+
+- loredanaaaa/server-rules-service:3.0.0-rc.1 — source 03d88c9;
+  manifest index sha256:2ee36a53cd5bed58380630d3c8c259d11f48bf475df65281f63e6727d4d1f7b2.
+- loredanaaaa/university-record-service:3.0.0-rc.1 — source a855ba4;
+  manifest index sha256:c5243c084b297f131cbb39d311febeb00dd27016f34dcecf45f14670ea0fb22c.
+
+.env.example now selects these candidates. Existing .env files and shell
+variables must be updated explicitly. Runtime follow-up with the published images passed on 29 October 2026:
+all four containers were healthy after pulling the candidate tags. Four requests
+per service through the local Lab 3 Gateway alternated A/B/A/B. Rules instance
+IDs were bf8b209204bf and 0192028ded53; Records IDs were db65f71b649e and
+a708265206a2. Both reported integer load fields (0/16). Other earlier runtime
+checks used local Lab 3 images.
+Gateway publication remains separate; its example tag has not been changed.
