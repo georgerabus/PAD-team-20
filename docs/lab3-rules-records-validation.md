@@ -47,3 +47,25 @@ IDs were bf8b209204bf and 0192028ded53; Records IDs were db65f71b649e and
 a708265206a2. Both reported integer load fields (0/16). Other earlier runtime
 checks used local Lab 3 images.
 Gateway publication remains separate; its example tag has not been changed.
+
+
+## Published Gateway follow-up (29 October 2026)
+
+Gateway PR #10 was merged into dev (owner screenshot). Candidate
+loredanaaaa/pad-gateway-service:lab3-f39a4a2 contains source f39a4a2;
+manifest index sha256:fe67a9cc5aa60458c877fc534e1da28910fb1d41b78d6ed6a9ac71b5bf9310a3.
+Publication verified linux/amd64 and linux/arm64. .env.example now selects it.
+
+All 13 routing/breaker/request-logging tests passed in Docker. The regression
+confirms peer-returned 502 responses do not evict healthy Session replicas;
+actual Gateway transport failures still count, as do timeouts and peer 503.
+
+Owner-provided live output confirms the published Gateway is healthy, four
+requests per service alternate between the two published Rules/Records replicas,
+and REQUEST logs contain method, path, status, durationMs, port and completed.
+The live failure test produced six transport 502 responses, followed by explicit
+503; both Rules instances tripped and were removed from SD. The test restored
+both original containers and confirmed registrations and service recovery.
+
+These checks do not establish full-stack HTTP ApplicantStory delivery, WebSocket
+instance affinity, or SD cache/fallback support. Those limitations remain.
