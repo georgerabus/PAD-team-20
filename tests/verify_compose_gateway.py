@@ -177,8 +177,8 @@ def main():
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.1.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.2')
     parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0-rc.2')
-    parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:3.1.0')
-    parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:3.0.0')
+    parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:3.2.1')
+    parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:3.1.1')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     checks = []
