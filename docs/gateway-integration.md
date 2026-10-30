@@ -1,5 +1,9 @@
 # Common Gateway integration
 
+For the current Lab 3 candidates and checks, see
+[Lab 3 candidate integration](lab3-candidate-integration.md). The runs below
+record earlier deployment history and their image versions.
+
 Verified on 8 October 2026. This is the integration work on
 `feat/gateway-service-integration`, based on CPR `dev` at `9c41b8a`. That work is now merged into the common repository; the results below remain
 a historical run, not a new verification of Session 2.1.0. Container startup and functioning
@@ -386,8 +390,37 @@ run through the Gateway passed on this Compose with no failed assertion,
 Applicant and Credential 33 and Player and Session 60, using local builds of the
 commits `2.0.0` was published from.
 
-One path never used the broker and is still open: Session `2.2.0` writes
-`SessionCompleted` to its log (`LoggingSessionEventsPublisher`) and does not
-call Player's `POST /internal/events/session-completed`. Compose gives Session
-no Player address. The Player and Session Postman collection makes that call
-itself.
+That path is now connected. Session `2.3.0` sends `SessionCompleted` to
+Player's `POST /internal/events/session-completed` through `PLAYER_BASE_URL`
+when a shift ends, and Player `2.1.0` applies it at most once per `eventId`
+**and** per `sessionId`: without a broker a retry carries a fresh `eventId` for
+the same shift, which `eventId` alone would pay twice. A failure to send is
+logged and does not fail `end`, since the shift is already recorded.
+`verify_compose_gateway.py` checks all of it: the shift is counted with no
+hand-delivered event, and a duplicate carrying `xpAwarded: 999` awards
+nothing.
+
+
+### Replicas and Service Discovery (Lab 3)
+
+Applicant, Credential, Moderation and Discord DMs run two replicas each, and
+every replica registers with Service Discovery as `http://<hostname>:<port>`.
+Discord DMs `3.1.0` and Moderation `3.0.0` add the shared `GET /status` and
+registration; Compose health-checks both through `/status`. Discord DMs
+publishes one WebSocket port per replica from the `DM_WS_PORT`–`DM_WS_PORT_LAST`
+range, and its replicas share new messages and presence through PostgreSQL
+`LISTEN`/`NOTIFY`, so `/ws/negotiate` keeps handing out the first port.
+
+The shared suite passed 82/83 with Rules and Records `2.0.0-rc.3`, Player
+`2.2.0`, Session `2.4.0`, Applicant, Credential and Service Discovery
+`3.0.0-rc.1`, DM `3.1.0`, Moderation `3.0.0` and the published Gateway `2.0.0`.
+The new checks all passed: every replica is listed and answers its `/status`, a
+socket on one DM replica sees presence and a message from the other, and a
+Moderation replica added at runtime registers while stopped ones drop out of the
+registry. The one failure is the known one, "a new Applicant reaches University
+Record" (404).
+
+Player, Session, Server Rules and University Record still run one replica,
+until their images register with Service Discovery. Gateway still reaches
+services by their Compose names; reading Service Discovery and balancing
+round-robin is the Gateway's next step.

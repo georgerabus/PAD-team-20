@@ -52,6 +52,26 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # ---- Service Discovery ----
+  # Every service instance registers here on startup; Gateway reads the
+  # registry to spread requests across the instances of each service.
+  service-discovery:
+    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.2.0-rc.1}
+    environment:
+      # An instance is called critical at this share of its own limit, and the
+      # alert is logged. With a webhook set it is also sent there; unset, the
+      # log is the only record.
+      LOAD_CRITICAL_RATIO: ${LOAD_CRITICAL_RATIO:-0.8}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
+      # Every check is a logged request, so not more often than this.
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ---- Player Service ----
   player-db:
     image: postgres:17
@@ -65,13 +85,15 @@ services:
     networks: [player]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U player -d player"]
+      # Fresh-volume initialization can still be finishing its final checkpoint.
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   player:
-    image: catalinasiminiuc/pad-player-service:2.0.0
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:3.0.0}
     depends_on:
       player-db:
         condition: service_healthy
@@ -80,6 +102,8 @@ services:
       JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
       SESSION_BASE_URL: http://gateway:8001/session
+      # Every replica registers here on startup as http://$HOSTNAME:3000.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
       DB_HOST: player-db
       DB_PORT: 5432
       DB_NAME: player
@@ -87,6 +111,14 @@ services:
       DB_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/player:/app/keys:ro
+    deploy:
+      replicas: ${PLAYER_REPLICAS:-2}
+    healthcheck:
+      # Exempt from the request limit, so a busy instance still answers.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks: [player, backend]
     restart: unless-stopped
 
@@ -103,13 +135,14 @@ services:
     networks: [session]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U session -d session"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:2.2.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:3.1.0}
     depends_on:
       session-db:
         condition: service_healthy
@@ -122,11 +155,14 @@ services:
       WS_PORT: 3011
       SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
-      # The three services Session calls, through the Gateway's internal
-      # listener. Marked internal in the contract, so reachable there only.
+      # The services Session calls, through the Gateway's internal listener.
+      # Marked internal in the contract, so reachable there only.
+      PLAYER_BASE_URL: http://gateway:8001/player
       APPLICANT_BASE_URL: http://gateway:8001/applicant
       SERVER_RULES_BASE_URL: http://gateway:8001/rules
       MODERATION_BASE_URL: http://gateway:8001/moderation
+      # Every replica registers here on startup as http://$HOSTNAME:3001.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
       DB_HOST: session-db
       DB_PORT: 5432
       DB_NAME: session
@@ -134,8 +170,20 @@ services:
       DB_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/session:/app/keys:ro
+    healthcheck:
+      # Exempt from the request limit, so a busy instance still answers.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      replicas: ${SESSION_REPLICAS:-2}
+    # One published port per replica, taken from the range in order, so the
+    # range must hold at least SESSION_REPLICAS ports. Live events reach the
+    # watchers of every replica through the database, so the address
+    # /ws/negotiate hands out, the first port, serves all of them.
     ports:
-      - "127.0.0.1:${SESSION_WS_PORT:-3011}:3011"
+      - "127.0.0.1:${SESSION_WS_PORT:-3011}-${SESSION_WS_PORT_LAST:-3013}:3011"
     networks: [session, backend]
     restart: unless-stopped
 
@@ -152,13 +200,14 @@ services:
     networks: [dm]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dm -d dm"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   dm-service:
-    image: augustinploteanu/pad-dm-service:2.2.0
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:3.2.1}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -177,15 +226,22 @@ services:
       SESSION_URL: http://gateway:8001/session
       CREDENTIAL_URL: http://gateway:8001/credential
       UNIVERSITY_RECORD_URL: http://gateway:8001/records
+      # Every replica registers here on startup as http://$HOSTNAME:3000.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
+    deploy:
+      replicas: ${DM_REPLICAS:-2}
+    # One host port per replica, taken from the range in order, so the range
+    # must hold at least DM_REPLICAS ports. Every replica serves every channel
+    # (they share messages and presence through dm-db), so the address
+    # /ws/negotiate hands out, the first port, reaches all of them.
     ports:
-      - "127.0.0.1:${DM_WS_PORT:-3002}:3001"
+      - "127.0.0.1:${DM_WS_PORT:-3002}-${DM_WS_PORT_LAST:-3004}:3001"
     networks: [dm, backend]
-    # Healthy once the WebSocket listener answers ordinary HTTP with its 426,
-    # so `up --wait` and dependants do not reach DM while it is still starting.
+    # Exempt from the request limit, so a busy replica still answers.
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode === 426 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -204,13 +260,14 @@ services:
     networks: [moderation]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U moderation -d moderation"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   moderation-service:
-    image: augustinploteanu/pad-moderation-service:2.2.0
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:3.1.1}
     depends_on:
       moderation-db:
         condition: service_healthy
@@ -225,10 +282,14 @@ services:
       CREDENTIAL_URL: http://gateway:8001/credential
       SERVER_RULES_URL: http://gateway:8001/rules
       SESSION_URL: http://gateway:8001/session
+      # Every replica registers here on startup as http://$HOSTNAME:3000.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    deploy:
+      replicas: ${MODERATION_REPLICAS:-2}
     networks: [moderation, backend]
-    # Healthy once REST answers at all (401 without identity headers).
+    # Exempt from the request limit, so a busy replica still answers.
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/decisions/up', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -246,12 +307,16 @@ services:
     networks: [server-rules]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U server_rules -d server_rules"]
+      start_period: 60s
       interval: 3s
       timeout: 3s
       retries: 20
   server-rules:
     image: ${SERVER_RULES_IMAGE:?set SERVER_RULES_IMAGE to a Gateway-compatible repository:tag}
     environment:
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      SD_SERVICE_NAME: rules
+      SD_REGISTER_INTERVAL_SECONDS: ${SD_REGISTER_INTERVAL_SECONDS:-30}
       APP_ENV: production
       APP_DEBUG: "false"
       APP_KEY: ${SERVER_RULES_APP_KEY:?Set SERVER_RULES_APP_KEY in .env}
@@ -268,6 +333,14 @@ services:
     depends_on:
       server-rules-db:
         condition: service_healthy
+    deploy:
+      replicas: ${SERVER_RULES_REPLICAS:-2}
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/status') === false ? 1 : 0);"]
+      start_period: 60s
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks: [server-rules, backend]
   university-record-db:
     image: postgres:17-bookworm
@@ -281,12 +354,16 @@ services:
     networks: [university-record]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U university_record -d university_record"]
+      start_period: 60s
       interval: 3s
       timeout: 3s
       retries: 20
   university-record:
     image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
     environment:
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      SD_SERVICE_NAME: records
+      SD_REGISTER_INTERVAL_SECONDS: ${SD_REGISTER_INTERVAL_SECONDS:-30}
       APP_ENV: production
       APP_DEBUG: "false"
       APP_KEY: ${UNIVERSITY_RECORD_APP_KEY:?Set UNIVERSITY_RECORD_APP_KEY in .env}
@@ -303,6 +380,14 @@ services:
     depends_on:
       university-record-db:
         condition: service_healthy
+    deploy:
+      replicas: ${UNIVERSITY_RECORD_REPLICAS:-2}
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/status') === false ? 1 : 0);"]
+      start_period: 60s
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks: [university-record, backend]
 
   # ---- Applicant Service ----
@@ -318,13 +403,14 @@ services:
     networks: [applicant]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U applicant -d applicant"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:2.0.0}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:3.0.0-rc.2}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -337,6 +423,10 @@ services:
       # UNIVERSITY_RECORD_URL (http://gateway:8001/records) joins it once
       # University Record accepts a story on POST /applicants.
       CREDENTIAL_URL: http://gateway:8001/credential
+      # Every replica registers here on startup as http://$HOSTNAME:80.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    deploy:
+      replicas: ${APPLICANT_REPLICAS:-2}
     networks: [applicant, backend]
     restart: unless-stopped
 
@@ -353,13 +443,14 @@ services:
     networks: [credential]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U credential -d credential"]
+      start_period: 60s
       interval: 2s
       timeout: 3s
       retries: 20
     restart: unless-stopped
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:2.0.0}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:3.0.0-rc.2}
     depends_on:
       credential-db:
         condition: service_healthy
@@ -371,6 +462,10 @@ services:
       CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
       # The same hand-over when Credential is the one that starts an applicant.
       APPLICANT_URL: http://gateway:8001/applicant
+      # Every replica registers here on startup as http://$HOSTNAME:80.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    deploy:
+      replicas: ${CREDENTIAL_REPLICAS:-2}
     networks: [credential, backend]
     restart: unless-stopped
 

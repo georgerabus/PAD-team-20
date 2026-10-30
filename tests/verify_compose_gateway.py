@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HTTP_CLIENT = """
 import json,sys,urllib.error,urllib.request
 d=json.loads(sys.argv[1])
-r=urllib.request.Request('http://127.0.0.1:8001'+d['path'],
+r=urllib.request.Request(d.get('base','http://127.0.0.1:8001')+d['path'],
     data=None if d['body'] is None else json.dumps(d['body']).encode(),
     method=d['method'],headers=d['headers'])
 try: response=urllib.request.urlopen(r,timeout=20)
@@ -71,10 +71,88 @@ def call(url, method='GET', body=None, headers=None):
         return response.status, decode(response.read().decode())
 
 
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
+def free_port_range(count):
+    """`count` consecutive free loopback ports, for a service with replicas."""
+    while True:
+        # Stay below the usual ephemeral range used by outgoing connections.
+        first = 10000 + secrets.randbelow(20000 - count + 1)
+        socks = []
+        try:
+            for port in range(first, first + count):
+                sock = socket.socket()
+                socks.append(sock)
+                sock.bind(('127.0.0.1', port))
+            return list(range(first, first + count))
+        except OSError:
+            continue
+        finally:
+            for sock in socks:
+                sock.close()
+
+
+class WebSocket:
+    """Just enough of a WebSocket client to join a DM channel and read frames."""
+
+    def __init__(self, port, path):
+        self.sock = socket.create_connection(('127.0.0.1', port), timeout=10)
+        key = base64.b64encode(secrets.token_bytes(16)).decode()
+        self.sock.sendall((f'GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                           'Upgrade: websocket\r\nConnection: Upgrade\r\n'
+                           f'Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n').encode())
+        self.buffer = b''
+        while b'\r\n\r\n' not in self.buffer:
+            self.buffer += self._recv()
+        head, self.buffer = self.buffer.split(b'\r\n\r\n', 1)
+        status = int(head.split(b'\r\n', 1)[0].split()[1])
+        if status != 101:
+            self.sock.close()
+            raise RuntimeError(f'WebSocket handshake on port {port} answered {status}')
+
+    def _recv(self):
+        chunk = self.sock.recv(4096)
+        if not chunk:
+            raise ConnectionError('WebSocket closed')
+        return chunk
+
+    def _read(self, count):
+        while len(self.buffer) < count:
+            self.buffer += self._recv()
+        data, self.buffer = self.buffer[:count], self.buffer[count:]
+        return data
+
+    def send(self, frame):
+        payload = json.dumps(frame).encode()
+        mask = secrets.token_bytes(4)
+        length = len(payload)
+        header = bytes([0x81]) + (bytes([0x80 | length]) if length < 126
+                                  else bytes([0x80 | 126]) + length.to_bytes(2, 'big'))
+        self.sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def wait_for(self, matches, timeout=10):
+        """The first text frame `matches` accepts, or None after `timeout`."""
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                self.sock.settimeout(max(deadline - time.monotonic(), 0.01))
+                first, second = self._read(2)
+                length = second & 0x7f
+                if length == 126:
+                    length = int.from_bytes(self._read(2), 'big')
+                elif length == 127:
+                    length = int.from_bytes(self._read(8), 'big')
+                data = self._read(length)
+                if first & 0x0f == 0x8:
+                    return None
+                if first & 0x0f == 0x1:
+                    frame = json.loads(data)
+                    if matches(frame):
+                        return frame
+        except (socket.timeout, ConnectionError):
+            pass
+        return None
+
+    def close(self):
+        self.sock.close()
 
 
 def websocket_status(port, path, token=None):
@@ -94,9 +172,13 @@ def main():
     parser.add_argument('--gateway-image', required=True)
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
-    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:2.2.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:2.0.0')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:2.0.0')
+    parser.add_argument('--service-discovery-image')
+    parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
+    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.1.0')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0-rc.2')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0-rc.2')
+    parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:3.2.1')
+    parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:3.1.1')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     checks = []
@@ -121,12 +203,34 @@ def main():
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             (directory / 'private.pem').chmod(0o644)
 
-        ports = [free_port() for _ in range(3)]
+        # Two replicas of each service that registers with Service Discovery.
+        # Session and DM publish one WebSocket port per replica, so each gets
+        # a range.
+        replicas = {'player': 2, 'session': 2, 'dm': 2, 'moderation': 2,
+                    'applicant': 2, 'credential': 2}
+        # Exact-size ranges keep the advertised first WS port occupied; Docker
+        # can leave it unused when a range has a spare. One block avoids overlap.
+        session_count = replicas['session']
+        free = free_port_range(1 + session_count + replicas['dm'])
+        session_ports = free[1:1 + session_count]
+        dm_ports = free[1 + session_count:]
+        ports = [free[0], session_ports[0], dm_ports[0]]
         settings = {
             'GATEWAY_IMAGE': args.gateway_image, 'SERVER_RULES_IMAGE': args.rules_image,
             'UNIVERSITY_RECORD_IMAGE': args.records_image, 'SESSION_IMAGE': args.session_image,
             'APPLICANT_IMAGE': args.applicant_image, 'CREDENTIAL_IMAGE': args.credential_image,
-            'GATEWAY_HTTP_PORT': str(ports[0]), 'SESSION_WS_PORT': str(ports[1]), 'DM_WS_PORT': str(ports[2]),
+            'PLAYER_IMAGE': args.player_image,
+            # Only when given: otherwise Compose's own pin is used, which is
+            # what a released Service Discovery should be checked against.
+            **({'SERVICE_DISCOVERY_IMAGE': args.service_discovery_image}
+               if args.service_discovery_image else {}),
+            'DM_IMAGE': args.dm_image, 'MODERATION_IMAGE': args.moderation_image,
+            'GATEWAY_HTTP_PORT': str(ports[0]),
+            'DM_WS_PORT': str(dm_ports[0]), 'DM_WS_PORT_LAST': str(dm_ports[-1]),
+            'SESSION_WS_PORT': str(session_ports[0]),
+            'SESSION_WS_PORT_LAST': str(session_ports[-1]),
+            'PLAYER_REPLICAS': str(replicas['player']), 'SESSION_REPLICAS': str(replicas['session']), 'DM_REPLICAS': str(replicas['dm']), 'MODERATION_REPLICAS': str(replicas['moderation']),
+            'APPLICANT_REPLICAS': str(replicas['applicant']), 'CREDENTIAL_REPLICAS': str(replicas['credential']),
             'SESSION_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[1]}',
             'DM_PUBLIC_WS_BASE_URL': f'ws://127.0.0.1:{ports[2]}',
             'PAD_KEYS_DIR': str(keys), 'CREDENTIAL_ISSUER_SECRET': secrets.token_hex(32),
@@ -143,13 +247,28 @@ def main():
         def compose(*parts, input=None, timeout=180, live=False):
             return run([*command, *parts], input=input, timeout=timeout, live=live)
 
-        def internal(path, method='GET', body=None, headers=None):
+        def internal(path, method='GET', body=None, headers=None, base='http://127.0.0.1:8001'):
             headers = dict(headers or {})
             if body is not None:
                 headers['Content-Type'] = 'application/json'
             status, raw = json.loads(compose('exec', '-T', 'gateway', 'python', '-c', HTTP_CLIENT,
-                json.dumps({'path': path, 'method': method, 'body': body, 'headers': headers})))
+                json.dumps({'base': base, 'path': path, 'method': method, 'body': body, 'headers': headers})))
             return status, decode(raw)
+
+        def registered(name):
+            # Service Discovery publishes no port: ask it from inside the network.
+            status, body = internal('/services/' + name, base='http://service-discovery:8000')
+            return body['instances'] if status == 200 else []
+
+        def wait_registered(name, count, timeout):
+            # Registration happens in the background after startup, and a stopped
+            # replica drops out only after three failed health checks.
+            deadline = time.monotonic() + timeout
+            while True:
+                instances = registered(name)
+                if len(instances) == count or time.monotonic() >= deadline:
+                    return instances
+                time.sleep(2)
 
         public = f'http://127.0.0.1:{ports[0]}'
         try:
@@ -165,6 +284,14 @@ def main():
                   [p['target'] for p in config['services']['dm-service']['ports']], [3001])
             check('Player calls Session through internal Gateway',
                   config['services']['player']['environment']['SESSION_BASE_URL'], 'http://gateway:8001/session')
+            for name, service in (('player', 'player'), ('dm', 'dm-service'),
+                                  ('moderation', 'moderation-service'),
+                                  ('applicant', 'applicant'), ('credential', 'credential')):
+                check(f'{service} runs {replicas[name]} replicas',
+                      config['services'][service].get('deploy', {}).get('replicas'), replicas[name])
+                check(f'{service} registers with Service Discovery',
+                      config['services'][service]['environment'].get('SERVICE_DISCOVERY_URL'),
+                      'http://service-discovery:8000')
             # Pull missing images separately: downloads must not consume the
             # service readiness deadline. Never pull over a local Gateway build.
             for image in sorted({service['image'] for service in config['services'].values()}):
@@ -186,6 +313,7 @@ def main():
                     container = json.loads(row)
                     if container['State'] != 'running' or container.get('Health') == 'unhealthy':
                         service = container['Service']
+                        print(run(['docker', 'inspect', container['Name'], '--format', '{{json .State}}']), flush=True)
                         print(compose('logs', '--no-color', '--tail', '35', service), flush=True)
                 raise
             deadline = time.monotonic() + 40
@@ -197,6 +325,44 @@ def main():
                     raise RuntimeError('Player did not become ready through Gateway')
                 time.sleep(0.5)
             check('Gateway health', call(public + '/up')[0], 200)
+            for row in compose('ps', '--format', 'json').splitlines():
+                container = json.loads(row)
+                if container['Service'] in ('session', 'dm-service'):
+                    published = [p for p in container.get('Publishers', []) if p['PublishedPort']]
+                    print(f"{container['Name']} publishes: {published}", flush=True)
+            # Every replica is listed under its own address and answers its
+            # health check with the shared /status body.
+            check('session registers with Service Discovery',
+                  config['services']['session']['environment'].get('SERVICE_DISCOVERY_URL'),
+                  'http://service-discovery:8000')
+            for name, port in (('player', 3000), ('session', 3001), ('dm', 3000),
+                               ('moderation', 3000), ('applicant', 80), ('credential', 80)):
+                expected = replicas[name]
+                instances = wait_registered(name, expected, 60)
+                check(f'every {name} replica registers with Service Discovery', len(set(instances)), expected)
+                check(f'{name} replicas register as http://<hostname>:{port}',
+                      all(re.fullmatch(rf'http://[a-z0-9-]+:{port}', url) for url in instances), True)
+                for url in instances:
+                    status, body = internal('/status', base=url)
+                    check(f'{name} replica answers its /status with load',
+                          (status, sorted(body.get('load', {}))) if isinstance(body, dict) else status,
+                          (200, ['inFlight', 'limit']))
+            applicant_instances = registered('applicant')
+            if len(applicant_instances) == replicas['applicant']:
+                target = applicant_instances[0]
+                removal = '/services/applicant/instances'
+                discovery = 'http://service-discovery:8000'
+                removed = (200, {'name': 'applicant', 'url': target})
+                check('a caller can remove one Applicant instance from SD',
+                      internal(removal, 'DELETE', {'url': target}, base=discovery), removed)
+                check('the other Applicant replica stays registered',
+                      sorted(registered('applicant')), sorted(applicant_instances[1:]))
+                check('repeating caller-requested SD removal is safe',
+                      internal(removal, 'DELETE', {'url': target}, base=discovery), removed)
+                check('a removed Applicant instance can register again',
+                      internal('/register', 'POST', {'name': 'applicant', 'url': target}, base=discovery)[0], 201)
+                check('all Applicant replicas are restored before the game checks',
+                      sorted(registered('applicant')), sorted(applicant_instances))
             check('protected REST refuses forged headers without token',
                   call(public + '/player/players/' + str(uuid.uuid4()), headers={'X-Player-Id': str(uuid.uuid4())})[0], 401)
             check('public listener refuses internal session creation',
@@ -207,8 +373,18 @@ def main():
                 ('Session', ports[1], '/sessions/' + str(uuid.uuid4()), 426),
                 ('DM', ports[2], '/sessions/' + str(uuid.uuid4()) + '/channels', 426),
             ):
+                # REST health can pass before the separate published WS listener is ready.
+                deadline = time.monotonic() + 10
+                while True:
+                    try:
+                        status, _ = call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.25)
                 check(f'WS-only port {name} rejects ordinary REST',
-                      call(f'http://127.0.0.1:{port}' + path, headers={'X-Session-Role': 'moderator'})[0], expected)
+                      status, expected)
 
             accounts = []
             for role in ('moderator', 'junior'):
@@ -317,8 +493,32 @@ def main():
             status, channels = call(public + f'/dm/sessions/{session_id}/channels', headers=session_auth)
             check('DM lists channels using real Session access-check', status, 200)
             channel_id = next(channel['channelId'] for channel in channels if channel['name'] == 'general-mod-chat')
-            check('DM posts using real Session access-check through Gateway',
-                  call(public + f'/dm/channels/{channel_id}/messages', 'POST', {'content': 'Compose integration check'}, session_auth)[0], 201)
+            # One socket on each DM replica, through the replica's own published
+            # port: the moderator on the first, the junior on the second.
+            dm_published = sorted(publisher['PublishedPort']
+                for row in compose('ps', '--format', 'json', 'dm-service').splitlines()
+                for publisher in json.loads(row)['Publishers'] if publisher['TargetPort'] == 3001)
+            check('each DM replica publishes its own WebSocket port', len(set(dm_published)), replicas['dm'])
+            sockets = []
+            try:
+                for port, token in zip(dm_published, (session['sessionToken'], joined['sessionToken'])):
+                    ws = WebSocket(port, f'/ws?sessionId={session_id}&token={token}')
+                    sockets.append(ws)
+                    ws.send({'type': 'join', 'channelId': channel_id})
+                    ws.wait_for(lambda f: f.get('type') == 'presence', 5)
+                both = sorted([moderator['playerId'], junior['playerId']])
+                check('presence on one DM replica lists a player on another',
+                      bool(sockets[0].wait_for(lambda f: f.get('type') == 'presence'
+                                               and sorted(f['online']) == both, 10)), True)
+                check('DM posts using real Session access-check through Gateway',
+                      call(public + f'/dm/channels/{channel_id}/messages', 'POST', {'content': 'Compose integration check'}, session_auth)[0], 201)
+                check('every DM replica pushes the message to its socket',
+                      [bool(ws.wait_for(lambda f: f.get('type') == 'message'
+                                        and f.get('content') == 'Compose integration check', 10)) for ws in sockets],
+                      [True] * replicas['dm'])
+            finally:
+                for ws in sockets:
+                    ws.close()
             check('DM shares Credential using forwarded identity through Gateway',
                   call(public + f'/dm/channels/{channel_id}/messages', 'POST', {'share': {
                       'source': 'credential', 'applicantId': fixture_id, 'credentialId': documents[0]['credentialId'],
@@ -340,6 +540,44 @@ def main():
                       call(public + '/moderation/decisions', 'POST', {
                           'sessionId': session_id, 'applicantId': next_applicant['applicantId'],
                           'moderatorId': moderator['playerId'], 'action': 'accept'}, session_auth)[0], 201)
+
+            # Ending the shift makes Session send SessionCompleted to Player
+            # over the internal port. Nothing here delivers it by hand.
+            check('Session ends the shift',
+                  call(public + f'/session/sessions/{session_id}/end', 'POST', None, session_auth)[0], 200)
+            time.sleep(1)
+            status, progression = call(
+                public + f"/player/players/{moderator['playerId']}/progression", headers=player_auth)
+            check('Player counted the shift without a hand-delivered event',
+                  progression.get('completedShifts') if status == 200 else status, 1)
+            # A retry carries a new eventId for the same shift; Player is
+            # idempotent on sessionId, so it must not be paid twice.
+            check('a duplicate SessionCompleted is ignored', internal(
+                '/player/internal/events/session-completed', 'POST', {
+                    'eventId': str(uuid.uuid4()), 'type': 'SessionCompleted',
+                    'occurredAt': datetime.now(timezone.utc).isoformat(),
+                    'sessionId': session_id,
+                    'payload': {'sessionId': session_id, 'perPlayer': [
+                        {'playerId': moderator['playerId'], 'xpAwarded': 999,
+                         'disciplinaryActions': 0}]}})[0], 200)
+            status, progression = call(
+                public + f"/player/players/{moderator['playerId']}/progression", headers=player_auth)
+            check('the duplicate awarded nothing',
+                  progression.get('completedShifts') if status == 200 else status, 1)
+
+            # Scaling at runtime: a new replica registers itself, and stopped
+            # ones drop out once they fail their health checks.
+            print('Scaling Moderation to 3 replicas, then to 1...', flush=True)
+            compose('up', '-d', '--no-deps', '--no-recreate', '--wait', '--scale', 'moderation-service=3',
+                    'moderation-service', timeout=300)
+            check('a Moderation replica added at runtime registers',
+                  len(wait_registered('moderation', 3, 60)), 3)
+            compose('up', '-d', '--no-deps', '--no-recreate', '--scale', 'moderation-service=1',
+                    'moderation-service', timeout=300)
+            check('stopped Moderation replicas drop out of Service Discovery',
+                  len(wait_registered('moderation', 1, 90)), 1)
+            check('Moderation still answers through Gateway with one replica',
+                  internal(f'/moderation/sessions/{session_id}/decisions')[0], 200)
         finally:
             subprocess.run([*command, 'down', '-v', '--remove-orphans'], capture_output=True, text=True, timeout=120)
 
@@ -350,8 +588,8 @@ def main():
         'applicant': args.applicant_image, 'credential': args.credential_image,
         'rules': args.rules_image, 'records': args.records_image,
         'player': config['services']['player']['image'],
-        'dm': config['services']['dm-service']['image'],
-        'moderation': config['services']['moderation-service']['image'],
+        'service_discovery': config['services']['service-discovery']['image'],
+        'dm': args.dm_image, 'moderation': args.moderation_image,
     }, 'checks': checks}
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
