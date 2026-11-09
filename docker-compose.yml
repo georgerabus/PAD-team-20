@@ -79,7 +79,7 @@ services:
   # registers itself with Service Discovery and retries until it answers, so
   # it needs no start order.
   broker:
-    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0-rc.1}
+    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0-rc.2}
     environment:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
