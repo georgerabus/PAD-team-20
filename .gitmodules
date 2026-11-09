@@ -28,3 +28,6 @@
 [submodule "pad-service-discovery"]
 	path = pad-service-discovery
 	url = https://github.com/georgerabus/pad-service-discovery
+[submodule "pad-message-broker"]
+	path = pad-message-broker
+	url = https://github.com/georgerabus/pad-message-broker
