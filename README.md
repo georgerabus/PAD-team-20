@@ -855,8 +855,8 @@ port. There is no broker.
 
 ## Running the System
 
-The common `docker-compose.yml` starts Gateway, Service Discovery, the eight
-domain services, their separate PostgreSQL databases and a WS-only edge.
+The common `docker-compose.yml` starts Gateway, Service Discovery, the Message
+Broker, the eight domain services, their separate PostgreSQL databases and a WS-only edge.
 Service Discovery publishes no port. Domain REST ports and
 all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
@@ -1025,6 +1025,8 @@ runtime registers and stopped ones drop out.
 | Applicant | [`georgerabus/pad-applicant-service`](https://hub.docker.com/r/georgerabus/pad-applicant-service) |
 | Credential | [`georgerabus/pad-credential-service`](https://hub.docker.com/r/georgerabus/pad-credential-service) |
 | Gateway | [`augustinploteanu/pad-gateway-service`](https://hub.docker.com/r/augustinploteanu/pad-gateway-service) |
+| Service Discovery | [`georgerabus/pad-service-discovery`](https://hub.docker.com/r/georgerabus/pad-service-discovery) |
+| Message Broker | [`georgerabus/pad-message-broker`](https://hub.docker.com/r/georgerabus/pad-message-broker) |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact

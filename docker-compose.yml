@@ -72,6 +72,26 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ---- Message Broker ----
+  # Carries messages between the services: a request is delivered to one
+  # instance of the service it names, found through Service Discovery. Reached
+  # at http://broker:8000 inside the network; it publishes no port. It
+  # registers itself with Service Discovery and retries until it answers, so
+  # it needs no start order.
+  broker:
+    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0-rc.1}
+    environment:
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
+      DEFAULT_TIMEOUT_SECONDS: ${BROKER_DEFAULT_TIMEOUT_SECONDS:-10}
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ---- Player Service ----
   player-db:
     image: postgres:17
