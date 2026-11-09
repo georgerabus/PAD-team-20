@@ -68,11 +68,18 @@ CREATE TABLE IF NOT EXISTS team_members (
 
 CREATE INDEX IF NOT EXISTS team_members_player_id_idx ON team_members (player_id);
 
--- Every event this service has already applied. The contract requires
--- consumers to be idempotent on eventId, so a redelivery never awards the
--- same XP twice.
+-- Every event this service has already applied. The contract requires this
+-- service to be idempotent on eventId and on sessionId, so neither a repeated
+-- call nor a retry carrying a fresh eventId awards the same XP twice.
 CREATE TABLE IF NOT EXISTS processed_events (
   event_id     UUID        PRIMARY KEY,
   type         TEXT        NOT NULL,
+  session_id   UUID,
   processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Added after the table, so a database created before this column still gets
+-- it. One shift is applied once, whatever eventId the sender chose for it.
+ALTER TABLE processed_events ADD COLUMN IF NOT EXISTS session_id UUID;
+CREATE UNIQUE INDEX IF NOT EXISTS processed_events_type_session_id
+  ON processed_events (type, session_id);

@@ -25,3 +25,6 @@
 [submodule "pad-gateway-service"]
 	path = pad-gateway-service
 	url = https://github.com/georgerabus/pad-team20-gateway
+[submodule "pad-service-discovery"]
+	path = pad-service-discovery
+	url = https://github.com/georgerabus/pad-service-discovery

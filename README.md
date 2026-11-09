@@ -14,8 +14,9 @@ A game set in a university Discord server where a moderation team decides who ge
 
 ## Service Boundaries
 
-The system has eight domain services and a Gateway that routes and authenticates
-REST requests. Each domain service owns its own data and business rules.
+The system has eight domain services, a Gateway that routes and authenticates
+REST requests, and a Service Discovery that keeps track of their running
+instances. Each domain service owns its own data and business rules.
 
 ### 1. Player Service
 Responsible for the identity of the players. Stores accounts, authentication, profiles, friends and XP/Levels. Tracks persistent player progression through leveling, based on moderator experience, completed shifts and disciplinary actions.
@@ -59,6 +60,14 @@ Python / FastAPI. Validates Player and Session tokens, forwards caller identity
 without Authorization, separates public and internal REST, and applies task
 timeout and concurrency limits. It owns no domain database. Its authenticated
 `POST /ws/negotiate` endpoint returns the direct Session or DM WebSocket URL.
+
+### 10. Service Discovery
+
+Python / FastAPI. Keeps the registry of running service instances. Every
+instance registers its own address on startup, Gateway reads the registry to
+spread requests across the instances of a service, and Service Discovery calls
+every instance's `GET /status` at a fixed interval, removing the ones that stop
+answering. It owns no database: the registry is held in memory.
 
 ## Architecture Diagram
 
@@ -174,6 +183,7 @@ contract, which is the one thing Lab 0 exists to force us to get right.
 | Moderation | TypeScript / NestJS | PostgreSQL | REST | Decides and scores the admission from Applicant, Credential and Rules |
 | Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST | Real-time per-session chat |
 | Gateway | Python / FastAPI | None | REST, WS URL negotiation | Validates tokens, routes and limits requests |
+| Service Discovery | Python / FastAPI | None | REST | Registry of running instances and their health checks |
 
 Two communication patterns are in use, each where it fits:
 
@@ -781,6 +791,46 @@ server → client:
 { "type":"error", "code":"enum(CHANNEL_ACCESS_DENIED|SHARE_DENIED)" }
 ```
 
+### Service Discovery
+
+Reached directly at `http://service-discovery:8000` on the `backend` network,
+not through the Gateway. Every instance registers on startup and may register
+again safely.
+
+| Method & path | Request | Response |
+|---|---|---|
+| `POST /register` `[REST]` | `{name, url}` | `201 {name, url}` \| `200` if already registered \| `422` |
+| `GET /services` `[REST]` | — | `200 {name: [url]}` |
+| `GET /services/{name}` `[REST]` | — | `200 {name, instances: [url]}` |
+| `DELETE /services/{name}/instances` `[REST]` | `{url}` | `200 {name, url}` even if already absent \| `422` |
+| `GET /status` `[REST]` | — | `200 {status, load: {inFlight, limit}}` |
+
+`name` is the service's Gateway prefix, such as `applicant`. `url` is
+`http://$HOSTNAME:<port>`: Docker sets `HOSTNAME` to the container's short ID,
+which resolves on the container's networks, so every replica has its own
+address. Every service exposes the same `GET /status`; Service Discovery calls
+it at a fixed interval and removes an instance after three consecutive failed
+checks. A removed instance returns by registering again.
+
+The caller-requested removal endpoint deletes only the matching instance of
+that service; other replicas stay registered. It does not stop the container
+or prevent re-registration. The Gateway's breaker must keep its own
+per-instance cooldown even if that instance registers again. This API enables
+the Grade 10 integration; the Gateway still needs to implement that behavior.
+
+The same answer says how loaded the instance is, which is a separate question
+from whether it is alive: one reporting `49/50` requests in flight is healthy
+and about to stop being useful. Service Discovery alerts when any capacity an
+instance reports reaches `LOAD_CRITICAL_RATIO` of its own limit, and again when
+it comes back under. The judgement is made there rather than by each service,
+so one threshold covers all of them. A critical instance is never removed:
+busy is the opposite of broken. With `ALERT_WEBHOOK_URL` set the alerts are
+also posted to a Discord webhook; unset, they are only logged.
+
+Player, Session, Applicant, Credential, Moderation and Discord DMs register
+today. Server Rules and University Record do not yet, and neither does the
+Gateway, so nothing watches those three. See [Replicas](#replicas).
+
 ### Service-to-service calls
 
 Every call between services is synchronous REST through the Gateway's internal
@@ -805,18 +855,18 @@ port. There is no broker.
 
 ## Running the System
 
-The common `docker-compose.yml` starts Gateway, the eight domain services,
-their separate PostgreSQL databases and a WS-only edge. Domain REST ports and
+The common `docker-compose.yml` starts Gateway, Service Discovery, the eight
+domain services, their separate PostgreSQL databases and a WS-only edge.
+Service Discovery publishes no port. Domain REST ports and
 all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
 
-**Two hand-overs are not connected yet.** University Record does not accept an
+**One hand-over is not connected yet.** University Record does not accept an
 applicant's story on `POST /applicants`, so Applicant and Credential are not
-given its address and it does not learn of new applicants. Session writes
-`SessionCompleted` to its log instead of sending it to Player, so a finished
-shift awards no progression unless that call is made by hand, as the Player and
-Session Postman collection does. See
+given its address and it does not learn of new applicants. `SessionCompleted`
+is connected: Session sends it to Player when a shift ends, and the shift is
+counted without anyone delivering the event by hand. See
 [integration status and verification](docs/gateway-integration.md).
 
 ### What you need
@@ -858,15 +908,56 @@ key, and only Session gets Session's private key. Gateway receives public keys;
 Discord DMs receives Session's public key for its WS handshake.
 
 `GATEWAY_HTTP_PORT` changes the published REST port; 8080 is the default, avoiding
-other local applications on 8000. `SESSION_WS_PORT` and `DM_WS_PORT` default to
-3011 and 3002. Each is a WebSocket-only listener of its own service, so ordinary
-HTTP requests reach no route on either: both answer `426 UPGRADE_REQUIRED`.
+other local applications on 8000. `SESSION_WS_PORT` defaults to 3011. Discord DMs
+publishes one port per replica, from `DM_WS_PORT` to `DM_WS_PORT_LAST` (3002 to
+3004 by default; see [Replicas](#replicas)). Each is a WebSocket-only listener of
+its own service, so ordinary HTTP requests reach no route on either: both answer
+`426 UPGRADE_REQUIRED`.
 
 All published ports bind to loopback for the local presentation.
 
 Services call `http://gateway:8001/<prefix>/...`. Port 8001 is never published
 on the host. Gateway upstreams use the container ports: DM and Moderation are
 both on port 3000, regardless of their former host ports.
+
+### Replicas
+
+Player, Session, Applicant, Credential, Moderation and Discord DMs run two
+replicas each, set by `PLAYER_REPLICAS`, `SESSION_REPLICAS`,
+`APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`, `MODERATION_REPLICAS` and
+`DM_REPLICAS`. Every replica registers with Service Discovery on startup as
+`http://<container hostname>:<port>`, so each is listed under its own address.
+Replicas can be added and removed while the system runs, with no other step:
+
+```bash
+# Add a third Moderation replica: it registers within seconds.
+docker compose up -d --no-deps --scale moderation-service=3 moderation-service
+# Back to one: the stopped replicas fail three health checks, about 30 seconds,
+# and Service Discovery drops them.
+docker compose up -d --no-deps --scale moderation-service=1 moderation-service
+# The registry, from inside the network (Service Discovery publishes no port):
+docker compose exec gateway python -c "import urllib.request; print(urllib.request.urlopen('http://service-discovery:8000/services').read().decode())"
+```
+
+Every replica of a service shares that service's database, and none keeps state
+of its own that the others need. The two with live state are the ones holding
+sockets, Discord DMs and Session, and both pass that state through PostgreSQL
+`LISTEN`/`NOTIFY`: DM every new message and presence change, Session every live
+event of a shift. So a client sees the same channel, and a watcher the same
+shift, whichever replica holds its socket.
+
+Each publishes one WebSocket port per replica, from `DM_WS_PORT` to
+`DM_WS_PORT_LAST` and from `SESSION_WS_PORT` to `SESSION_WS_PORT_LAST`. Each
+range must hold at least that service's replica count. The first replica takes
+the first port, which is the address `/ws/negotiate` hands out; because the
+events reach every replica, that one address serves all of them.
+
+Gateway still reaches each service by its Compose name, which Docker resolves to
+every replica's address. Reading the instances from Service Discovery and
+spreading requests round-robin is the next step, in the Gateway.
+
+Server Rules and University Record run one replica each until their images
+register with Service Discovery.
 
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
@@ -898,6 +989,16 @@ endpoint: the internal ones on `gateway:8001`, the players' reads with a
 session token, and a folder of its own checking that identity headers the
 caller sets and internal paths are refused on the published port.
 
+`postman/dm-and-moderation.postman_collection.json` runs one shift through
+Discord DMs and Moderation with real tokens: channels, messages and shared
+evidence in DM, the moderator's decision in Moderation, and Session counting
+it. It also covers the WebSockets: it negotiates DM's and Session's sockets
+through the Gateway's `POST /ws/negotiate`, and checks that both ports speak only
+WebSocket (`426` to plain HTTP) and that DM checks the token on the handshake
+(`401`, `403`). Newman cannot hold a socket open, so the collection saves the
+negotiated `dmSocketUrl` and `sessionSocketUrl` for a live demo in Postman's
+WebSocket tab.
+
 The remaining collections were written for earlier direct-service setups and have
 not all been migrated. Run `tests/verify_compose_gateway.py` for the full
 boundary and flow checks; do not use the old collections' historical success as
@@ -905,7 +1006,11 @@ evidence for this deployment.
 The test starts its own fresh Compose project and removes only its temporary
 resources. It hands Credential one known document for the sharing checks and
 separately checks that a new applicant reaches Credential and University
-Record, so a missing hand-over remains a failure.
+Record, so a missing hand-over remains a failure. It runs two replicas of each
+registered service and checks that every replica is listed in Service Discovery
+and answers its `/status`, that a socket on one Discord DMs replica sees
+presence and messages from the other, and that a Moderation replica added at
+runtime registers and stopped ones drop out.
 
 ### Images
 
@@ -931,6 +1036,12 @@ the stack runs on Intel and Apple Silicon alike:
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t <username>/<service-name>:<version> --push .
 ```
+
+For Lab 3 integration, SD, Applicant and Credential use candidate tags built
+from their tested `dev` commits. Their final release PRs stay as drafts until
+the lab is ready to present. The exact commits, image digests and current
+integration result are in [the candidate report](docs/lab3-candidate-integration.md).
+Manual candidate publication does not replace the required release CI run.
 
 ## GitHub Workflow
 
@@ -959,7 +1070,7 @@ chore/setup-submodules
 ### Merge Strategy
 
 - **Into `dev`:** feature branches are squashed, so `dev` gains one commit per finished task
-- **Into `master`:** `dev` is squashed in, and only once a lab is ready to present
+- **Into `master`:** `dev` is merged with a merge commit, and only once a lab is ready to present
 - **Approvals:** every pull request needs at least one teammate's sign-off
 
 ### Pull request contents

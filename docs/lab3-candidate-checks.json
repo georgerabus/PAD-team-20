@@ -1,0 +1,817 @@
+{
+  "generated_at_utc": "2026-10-26T16:12:22.911858+00:00",
+  "passed": 98,
+  "total": 99,
+  "images": {
+    "gateway": "augustinploteanu/pad-gateway-service:2.0.0",
+    "session": "catalinasiminiuc/pad-server-moderation-session-service:3.1.0",
+    "applicant": "georgerabus/pad-applicant-service:3.0.0-rc.2",
+    "credential": "georgerabus/pad-credential-service:3.0.0-rc.2",
+    "rules": "loredanaaaa/server-rules-service:2.0.0-rc.3",
+    "records": "loredanaaaa/university-record-service:2.0.0-rc.3",
+    "player": "catalinasiminiuc/pad-player-service:3.0.0",
+    "service_discovery": "georgerabus/pad-service-discovery:3.2.0-rc.1",
+    "dm": "augustinploteanu/pad-dm-service:3.1.0",
+    "moderation": "augustinploteanu/pad-moderation-service:3.0.0"
+  },
+  "checks": [
+    {
+      "check": "only Gateway and the Session and DM sockets publish ports",
+      "passed": true,
+      "actual": [
+        "dm-service",
+        "gateway",
+        "session"
+      ],
+      "expected": [
+        "dm-service",
+        "gateway",
+        "session"
+      ]
+    },
+    {
+      "check": "Gateway publishes only its public listener",
+      "passed": true,
+      "actual": [
+        8000
+      ],
+      "expected": [
+        8000
+      ]
+    },
+    {
+      "check": "Session publishes only its WebSocket listener",
+      "passed": true,
+      "actual": [
+        3011
+      ],
+      "expected": [
+        3011
+      ]
+    },
+    {
+      "check": "DM publishes only its WebSocket listener",
+      "passed": true,
+      "actual": [
+        3001
+      ],
+      "expected": [
+        3001
+      ]
+    },
+    {
+      "check": "Player calls Session through internal Gateway",
+      "passed": true,
+      "actual": "http://gateway:8001/session",
+      "expected": "http://gateway:8001/session"
+    },
+    {
+      "check": "player runs 2 replicas",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "player registers with Service Discovery",
+      "passed": true,
+      "actual": "http://service-discovery:8000",
+      "expected": "http://service-discovery:8000"
+    },
+    {
+      "check": "dm-service runs 2 replicas",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "dm-service registers with Service Discovery",
+      "passed": true,
+      "actual": "http://service-discovery:8000",
+      "expected": "http://service-discovery:8000"
+    },
+    {
+      "check": "moderation-service runs 2 replicas",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "moderation-service registers with Service Discovery",
+      "passed": true,
+      "actual": "http://service-discovery:8000",
+      "expected": "http://service-discovery:8000"
+    },
+    {
+      "check": "applicant runs 2 replicas",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "applicant registers with Service Discovery",
+      "passed": true,
+      "actual": "http://service-discovery:8000",
+      "expected": "http://service-discovery:8000"
+    },
+    {
+      "check": "credential runs 2 replicas",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "credential registers with Service Discovery",
+      "passed": true,
+      "actual": "http://service-discovery:8000",
+      "expected": "http://service-discovery:8000"
+    },
+    {
+      "check": "Gateway health",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "session registers with Service Discovery",
+      "passed": true,
+      "actual": "http://service-discovery:8000",
+      "expected": "http://service-discovery:8000"
+    },
+    {
+      "check": "every player replica registers with Service Discovery",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "player replicas register as http://<hostname>:3000",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "player replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "player replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "every session replica registers with Service Discovery",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "session replicas register as http://<hostname>:3001",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "session replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "session replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "every dm replica registers with Service Discovery",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "dm replicas register as http://<hostname>:3000",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "dm replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "dm replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "every moderation replica registers with Service Discovery",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "moderation replicas register as http://<hostname>:3000",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "moderation replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "moderation replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "every applicant replica registers with Service Discovery",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "applicant replicas register as http://<hostname>:80",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "applicant replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "applicant replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "every credential replica registers with Service Discovery",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "credential replicas register as http://<hostname>:80",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "credential replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "credential replica answers its /status with load",
+      "passed": true,
+      "actual": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ],
+      "expected": [
+        200,
+        [
+          "inFlight",
+          "limit"
+        ]
+      ]
+    },
+    {
+      "check": "a caller can remove one Applicant instance from SD",
+      "passed": true,
+      "actual": [
+        200,
+        {
+          "name": "applicant",
+          "url": "http://8fcc3614a2ec:80"
+        }
+      ],
+      "expected": [
+        200,
+        {
+          "name": "applicant",
+          "url": "http://8fcc3614a2ec:80"
+        }
+      ]
+    },
+    {
+      "check": "the other Applicant replica stays registered",
+      "passed": true,
+      "actual": [
+        "http://9a690c73e33d:80"
+      ],
+      "expected": [
+        "http://9a690c73e33d:80"
+      ]
+    },
+    {
+      "check": "repeating caller-requested SD removal is safe",
+      "passed": true,
+      "actual": [
+        200,
+        {
+          "name": "applicant",
+          "url": "http://8fcc3614a2ec:80"
+        }
+      ],
+      "expected": [
+        200,
+        {
+          "name": "applicant",
+          "url": "http://8fcc3614a2ec:80"
+        }
+      ]
+    },
+    {
+      "check": "a removed Applicant instance can register again",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "all Applicant replicas are restored before the game checks",
+      "passed": true,
+      "actual": [
+        "http://8fcc3614a2ec:80",
+        "http://9a690c73e33d:80"
+      ],
+      "expected": [
+        "http://8fcc3614a2ec:80",
+        "http://9a690c73e33d:80"
+      ]
+    },
+    {
+      "check": "protected REST refuses forged headers without token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "public listener refuses internal session creation",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "WS-only port Session rejects ordinary REST",
+      "passed": true,
+      "actual": 426,
+      "expected": 426
+    },
+    {
+      "check": "WS-only port DM rejects ordinary REST",
+      "passed": true,
+      "actual": 426,
+      "expected": 426
+    },
+    {
+      "check": "register moderator through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "register junior through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "create a real team through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "add junior member to the real team",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "Player opens Session through Gateway port 8001",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "junior joins Session through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Session read works with its issued token",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Gateway negotiates session WS",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Gateway returns the published session WS URL",
+      "passed": true,
+      "actual": "ws://127.0.0.1:10431/sessions/54248052-7a7b-4f2b-b92d-ead643e828ad/live",
+      "expected": "ws://127.0.0.1:10431/sessions/54248052-7a7b-4f2b-b92d-ead643e828ad/live"
+    },
+    {
+      "check": "Gateway negotiates dm WS",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Gateway returns the published dm WS URL",
+      "passed": true,
+      "actual": "ws://127.0.0.1:10433/ws?sessionId=54248052-7a7b-4f2b-b92d-ead643e828ad",
+      "expected": "ws://127.0.0.1:10433/ws?sessionId=54248052-7a7b-4f2b-b92d-ead643e828ad"
+    },
+    {
+      "check": "Session WS validates a real session token",
+      "passed": true,
+      "actual": 101,
+      "expected": 101
+    },
+    {
+      "check": "Session WS rejects an invalid token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "Session WS accepts Bearer transport",
+      "passed": true,
+      "actual": 101,
+      "expected": 101
+    },
+    {
+      "check": "Session WS rejects a missing token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "Session WS rejects a mismatched session",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "DM WS validates the same session token",
+      "passed": true,
+      "actual": 101,
+      "expected": 101
+    },
+    {
+      "check": "DM WS rejects an invalid token",
+      "passed": true,
+      "actual": 401,
+      "expected": 401
+    },
+    {
+      "check": "internal Gateway creates a real Applicant",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "moderator reads the real Applicant through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "junior reads the real Applicant through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "public Gateway refuses the full internal Applicant view",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "a new Applicant reaches Credential",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "a new Applicant reaches University Record",
+      "passed": false,
+      "actual": 404,
+      "expected": 200
+    },
+    {
+      "check": "Credential stores a story from another service",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "moderator reads Credential fixture through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "junior is refused by Credential",
+      "passed": true,
+      "actual": 403,
+      "expected": 403
+    },
+    {
+      "check": "Session assigns channel access",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Session starts the shift",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "DM creates real channels through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "DM lists channels using real Session access-check",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "each DM replica publishes its own WebSocket port",
+      "passed": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "check": "presence on one DM replica lists a player on another",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "check": "DM posts using real Session access-check through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "every DM replica pushes the message to its socket",
+      "passed": true,
+      "actual": [
+        true,
+        true
+      ],
+      "expected": [
+        true,
+        true
+      ]
+    },
+    {
+      "check": "DM shares Credential using forwarded identity through Gateway",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "Moderation internal decision listing works through Gateway",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Server Rules accepts internal creation without Authorization",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "University Record accepts Gateway identity",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Session requests the next Applicant",
+      "passed": true,
+      "actual": 202,
+      "expected": 202
+    },
+    {
+      "check": "Session next-applicant exists in real Applicant service",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Moderation records a decision on that Applicant",
+      "passed": true,
+      "actual": 201,
+      "expected": 201
+    },
+    {
+      "check": "Session ends the shift",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "Player counted the shift without a hand-delivered event",
+      "passed": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "check": "a duplicate SessionCompleted is ignored",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    },
+    {
+      "check": "the duplicate awarded nothing",
+      "passed": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "check": "a Moderation replica added at runtime registers",
+      "passed": true,
+      "actual": 3,
+      "expected": 3
+    },
+    {
+      "check": "stopped Moderation replicas drop out of Service Discovery",
+      "passed": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "check": "Moderation still answers through Gateway with one replica",
+      "passed": true,
+      "actual": 200,
+      "expected": 200
+    }
+  ]
+}
