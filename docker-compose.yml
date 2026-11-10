@@ -63,6 +63,13 @@ services:
       # log is the only record.
       LOAD_CRITICAL_RATIO: ${LOAD_CRITICAL_RATIO:-0.8}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      # The operator token for GET /logs/all, which collects every instance's
+      # logs. Unset, that endpoint refuses every request: the collected lines
+      # carry what no player may see, such as which applicant is an impostor.
+      LOGS_TOKEN: ${LOGS_TOKEN:-}
+      # The Gateway does not register itself, so its lines are only collected
+      # if it is named here.
+      LOGS_EXTRA_INSTANCES: ${LOGS_EXTRA_INSTANCES:-gateway=http://gateway:8000}
     networks: [backend]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
