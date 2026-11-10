@@ -56,7 +56,7 @@ services:
   # Every service instance registers here on startup; Gateway reads the
   # registry to spread requests across the instances of each service.
   service-discovery:
-    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:3.2.0}
+    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:4.0.0-rc.1}
     environment:
       # An instance is called critical at this share of its own limit, and the
       # alert is logged. With a webhook set it is also sent there; unset, the
@@ -70,6 +70,11 @@ services:
       # The Gateway does not register itself, so its lines are only collected
       # if it is named here.
       LOGS_EXTRA_INSTANCES: ${LOGS_EXTRA_INSTANCES:-gateway=http://gateway:8000}
+      # For the same reason, on the metrics side: the Gateway is the front
+      # door every client request passes through, so leaving it off the
+      # dashboard would hide the busiest component in the system. Watched
+      # only — nothing here puts it in the registry.
+      METRICS_EXTRA_INSTANCES: ${METRICS_EXTRA_INSTANCES:-gateway=http://gateway:8000}
     networks: [backend]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
@@ -121,7 +126,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:3.0.0}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0-rc.1}
     depends_on:
       player-db:
         condition: service_healthy
@@ -170,7 +175,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:3.1.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.0-rc.1}
     depends_on:
       session-db:
         condition: service_healthy
@@ -497,6 +502,101 @@ services:
     networks: [credential, backend]
     restart: unless-stopped
 
+  # ---- Monitoring ----
+  # Behind the `monitoring` profile, so `docker compose up` starts the system
+  # as it always has and nobody pays for four more containers they did not
+  # ask for. Start them with:
+  #
+  #     docker compose --profile monitoring up -d
+  #
+  # Grafana is then at http://localhost:3300, with the dashboard already
+  # loaded and both data sources already connected.
+
+  # Collects the numbers. One target for the whole system: Service Discovery
+  # serves what every instance last reported at GET /metrics, so no service
+  # has a metrics endpoint of its own to maintain.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Long enough to look back over a demonstration, short enough that the
+      # volume does not grow without anyone noticing.
+      - --storage.tsdb.retention.time=48h
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks: [backend]
+    restart: unless-stopped
+
+  # Holds the lines. One process, filesystem storage: this watches eleven
+  # services on one machine, and a clustered log store would be more moving
+  # parts than the thing being monitored.
+  loki:
+    image: grafana/loki:3.3.2
+    profiles: [monitoring]
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./monitoring/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    networks: [backend]
+    restart: unless-stopped
+
+  # Ships every container's output to Loki. Containers are discovered through
+  # the Docker API rather than listed, so a replica started with
+  # `--scale player=4` is collected from without any config change.
+  promtail:
+    image: grafana/promtail:3.3.2
+    profiles: [monitoring]
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./monitoring/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      # Read-only, and only ever used to list containers and read their
+      # output. Nothing here starts, stops or changes a container.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-data:/promtail
+    depends_on: [loki]
+    networks: [backend]
+    restart: unless-stopped
+
+  # Draws it. The dashboard and both data sources are provisioned from files
+  # in this repository, so the stack comes up with them already there instead
+  # of someone clicking them together before a demonstration.
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [monitoring]
+    environment:
+      # A dashboard of counts and container names, on a developer's own
+      # machine. A login would be one more thing to remember and nothing
+      # here is worth protecting; the port is bound to the loopback address
+      # either way.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+      # Opens on the system overview rather than on an empty home page.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pad-overview.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      # The two subdirectories, not the whole provisioning folder: mounting
+      # over it would hide the empty `alerting` and `plugins` directories the
+      # image ships, and Grafana logs an error for each one it cannot find.
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      # Not 3000: the NestJS services already use it inside the network, and
+      # it is the port most likely to be taken on a developer's machine.
+      - "127.0.0.1:${GRAFANA_PORT:-3300}:3000"
+    depends_on: [prometheus, loki]
+    networks: [backend]
+    restart: unless-stopped
+
 # One private network per service for its database, and a shared one the
 # services use to reach each other.
 networks:
@@ -519,3 +619,7 @@ volumes:
   session-db-data:
   dm-db-data:
   moderation-db-data:
+  prometheus-data:
+  loki-data:
+  promtail-data:
+  grafana-data:
