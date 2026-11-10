@@ -1,0 +1,56 @@
+# Loki as a single process, holding the logs Promtail collects.
+#
+# Everything here is the smallest arrangement that works: one node, no ring to
+# join, filesystem storage under a named volume. The system this watches is
+# eleven services on one machine, and a clustered log store would be more
+# moving parts than the thing being monitored.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # Loki logs every push at info, which would be a line per service per few
+  # seconds about the lines it just collected.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # A service restarting replays its startup lines with their original
+  # timestamps, and a batch arriving out of order must not be refused.
+  reject_old_samples: false
+  # Log lines from this stack are one JSON object or one formatted line each;
+  # nothing legitimate comes close to this.
+  max_line_size: 256KB
+  # Kept for two days. This is a lab system that is started, demonstrated and
+  # stopped, so anything older is only taking up disk.
+  retention_period: 48h
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true
+
+# Nothing is sent anywhere.
+analytics:
+  reporting_enabled: false

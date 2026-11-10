@@ -9,6 +9,7 @@ A game set in a university Discord server where a moderation team decides who ge
 - [Technologies and Communication Patterns](#technologies-and-communication-patterns)
 - [Communication Contract](#communication-contract)
 - [Running the System](#running-the-system)
+- [Monitoring](#monitoring)
 - [GitHub Workflow](#github-workflow)
 - [Project Board](#project-board)
 
@@ -1044,6 +1045,101 @@ from their tested `dev` commits. Their final release PRs stay as drafts until
 the lab is ready to present. The exact commits, image digests and current
 integration result are in [the candidate report](docs/lab3-candidate-integration.md).
 Manual candidate publication does not replace the required release CI run.
+
+## Monitoring
+
+Prometheus, Loki and Grafana watch the running system. They sit behind a
+Compose profile, so `docker compose up -d` starts the system exactly as it
+always has and nobody pays for four more containers they did not ask for:
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+Grafana is then at **http://localhost:3300**, opening on *PAD Team 20 —
+System Overview*, with both data sources connected and the dashboard already
+loaded. There is no login: it is a page of counts and container names on a
+developer's own machine, and the port is bound to the loopback address.
+
+Stop them again without touching the system:
+
+```bash
+docker compose --profile monitoring down
+```
+
+### Where the numbers come from
+
+```
+every instance ──GET /status──► Service Discovery ──GET /metrics──► Prometheus ──┐
+                                 (the health check                                 ├──► Grafana
+every container ──stdout──► Promtail ──push──► Loki ─────────────────────────────┘
+```
+
+**Metrics: one scrape target for the whole system.** Service Discovery
+already asks every registered instance for its `GET /status` at a fixed
+interval, to decide what to remove and what to alert on, and reads the load
+out of the answer. `GET /metrics` serves that last answer rather than
+discarding it. Scraping eight services separately would collect the same
+numbers a second time and would mean eight services each growing a metrics
+endpoint to maintain.
+
+What that gives, per instance: whether it answered its last health check, how
+many consecutive checks it has failed, whether Service Discovery considers it
+critically loaded, its in-flight requests against its own limit, Session's
+open watcher sockets, the database pool for the services that report one, and
+how old each of those numbers is. Plus the thresholds they are judged
+against, so the dashboard draws the alert line from the running
+configuration instead of hard-coding it.
+
+The Gateway is the one component the registry cannot describe, because it is
+the thing that reads the registry. `METRICS_EXTRA_INSTANCES` has Service
+Discovery watch it anyway — probed for its readings alone, never registered
+or removed.
+
+**Logs: every container, discovered through the Docker API.** Promtail lists
+containers rather than being given a list, so a replica started with
+`docker compose up -d --scale player=4` is collected from without any config
+change. It strips the NestJS colour codes and otherwise stores lines as
+written; the eight services use five different log formats between them, and
+LogQL parses at query time, where a wrong guess costs a query rather than a
+day of unsearchable logs.
+
+Logs and metrics share a join key. Every line carries the container id as
+`instance_id`, which is the same value Service Discovery exports on every
+metric and the same `instance` each service writes in its own lines — so the
+instance in a graph and the lines behind it are one filter apart.
+
+The monitoring containers are deliberately not collected from themselves:
+reading Loki's output and pushing it into Loki, which then logs the write, is
+a loop. `docker compose logs loki` still works.
+
+### What the dashboard shows
+
+| Row | Answers |
+|---|---|
+| The system at a glance | Are all eight services registered, are their instances answering, is anything critically loaded, and is anything being collected at all |
+| Load | How full each instance is as a share of **its own** limit — 50 for Player and Session, 100 for the Python services, 16 for Rules and Records — against the line Service Discovery alerts at |
+| Health | Which instances were answering over time, and how stale each reading is, against the age at which an instance is removed |
+| What the services hold | Database pool connections, with `waiting` above zero meaning the pool rather than the service is the bottleneck, and Session's open watcher sockets against their limit |
+| Traffic | Requests per second by status and the median and 95th percentile latency, read from the Gateway's own log lines — every client request passes through it |
+| The lines themselves | Warnings and errors across every container, and the full collection, live |
+
+Under a load test driving Player past its limit, the dashboard shows both
+replicas at 98% and 100% of their own limits, two instances flagged as
+critically loaded, and the Gateway's status mix shifting to mostly `429`
+with `408` and `503` appearing behind it.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GRAFANA_PORT` | `3300` | Where Grafana is published, on the loopback address |
+| `METRICS_EXTRA_INSTANCES` | `gateway=http://gateway:8000` | Instances watched for metrics without registering |
+
+The dashboard, both data sources, and the Prometheus, Loki and Promtail
+configuration all live in [monitoring/](monitoring/) and are provisioned on
+startup. Edits made in the Grafana UI are not written back: change the JSON
+there, or export from Grafana and replace the file.
 
 ## GitHub Workflow
 

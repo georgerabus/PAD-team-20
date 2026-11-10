@@ -1,0 +1,34 @@
+# What Prometheus collects, and how often.
+#
+# One target holds the whole system. Service Discovery asks every registered
+# instance for its GET /status at a fixed interval anyway, to decide what to
+# remove and what to alert on, and serves the last answer it got from each of
+# them at GET /metrics. Scraping eight services separately would collect the
+# same numbers a second time, and would mean eight services growing a metrics
+# endpoint of their own.
+global:
+  # Twice as often as Service Discovery checks, so a change in the registry
+  # shows up within one check of happening rather than within two. There is
+  # no point going faster than this: the readings are no fresher than the
+  # health check that collected them, and pad_instance_reading_age_seconds
+  # says how old each one is.
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  external_labels:
+    system: pad-team-20
+
+scrape_configs:
+  - job_name: service-discovery
+    static_configs:
+      - targets: ["service-discovery:8000"]
+    # Service Discovery labels each sample with the container it describes as
+    # `instance_id`, not `instance`, precisely so that Prometheus can add its
+    # own `instance` — the address it scraped — without the two colliding.
+    # One says which process reported the number, the other which process the
+    # number is about.
+
+  # Prometheus scrapes itself, so the dashboard can tell "nothing is
+  # happening" from "nothing is being collected".
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]

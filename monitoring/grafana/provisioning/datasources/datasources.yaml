@@ -1,0 +1,23 @@
+# Both data sources, created when Grafana starts rather than clicked
+# together afterwards: the dashboard is in this repository and has to find
+# them by a fixed uid on any machine that runs the stack.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: pad-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Matches prometheus.yml, so Grafana picks sensible step sizes.
+      timeInterval: 5s
+
+  - name: Loki
+    type: loki
+    uid: pad-loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 2000

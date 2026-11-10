@@ -1,0 +1,70 @@
+# Where the logs come from, and the only labels they carry.
+#
+# Containers are discovered through the Docker API rather than listed here, so
+# a replica started with `docker compose up --scale player=4` is collected
+# from without this file changing.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  # Survives a restart of Promtail, so the same lines are not collected twice.
+  filename: /promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+
+    relabel_configs:
+      # This system only. The socket shows every container on the machine,
+      # including whatever else the developer happens to be running.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        regex: pad-team-20
+        action: keep
+      # Not the monitoring stack's own containers. Partly because they are
+      # not part of the system being watched, and partly because collecting
+      # them is a loop: Promtail reads Loki's output, pushes it to Loki,
+      # which logs the write, which Promtail then reads. `docker compose
+      # logs loki` is still there when the collection itself needs debugging.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        regex: "prometheus|loki|promtail|grafana"
+        action: drop
+      # The Compose service name: `player`, `gateway`, `service-discovery`.
+      # The same value Service Discovery registers under, for all but a
+      # couple of containers whose Compose name differs from their registered
+      # one, so a panel can be filtered by it.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      # `pad-team-20-player-2`, which tells the replicas apart by name.
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/?(.*)"
+        target_label: container
+      # The short container id. Inside Docker this is also the hostname, which
+      # is what every service writes as `instance` in its own log lines and
+      # what Service Discovery exports as `instance_id` on every metric — so
+      # one value joins a graph to the lines behind it.
+      - source_labels: ["__meta_docker_container_id"]
+        regex: "(.{12}).*"
+        target_label: instance_id
+
+    pipeline_stages:
+      # The NestJS services colour their output, and the escape sequences
+      # would otherwise be part of every line searched and displayed.
+      - replace:
+          expression: '(\x1b\[[0-9;]*m)'
+          replace: ""
+
+# Nothing beyond these labels is extracted here. The services write five
+# different log formats between them — JSON from the broker, JSON behind a
+# prefix from the Gateway, coloured text from the NestJS services, Laravel and
+# nginx lines from Applicant, Python logging from Service Discovery — and
+# parsing all five at collection time would mean five pipelines to keep
+# correct, and a label set that grows with every service that changes its
+# logger. Loki stores the line; LogQL parses it at query time, where a wrong
+# guess costs a query rather than a day of unsearchable logs.
