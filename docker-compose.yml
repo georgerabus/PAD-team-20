@@ -82,11 +82,12 @@ services:
   # ---- Message Broker ----
   # Carries messages between the services: a request is delivered to one
   # instance of the service it names, found through Service Discovery. Reached
-  # at http://broker:8000 inside the network; it publishes no port. It
+  # at http://broker:8000 inside the network, and for gRPC calls between
+  # services at broker:9001; it publishes no port. It
   # registers itself with Service Discovery and retries until it answers, so
   # it needs no start order.
   broker:
-    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0-rc.2}
+    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0-rc.3}
     environment:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
