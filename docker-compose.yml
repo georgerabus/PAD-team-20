@@ -447,7 +447,7 @@ services:
     restart: unless-stopped
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:4.0.0-rc.1}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:4.0.0-rc.2}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -488,7 +488,7 @@ services:
     restart: unless-stopped
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:4.0.0-rc.1}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:4.0.0-rc.2}
     depends_on:
       credential-db:
         condition: service_healthy
