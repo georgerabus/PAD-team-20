@@ -965,6 +965,9 @@ empty volume. Applicant/Credential use Laravel migrations at startup and need
 no APP_KEY because they are JSON APIs with no cookie/session encryption.
 Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named volumes retain data; `docker compose down -v` deletes this deployment's data.
 
+The Message Broker keeps the events it has not delivered yet in the `broker-data`
+volume, so they are delivered after the broker restarts.
+
 `postman/player-and-session.postman_collection.json` runs the Player and
 Session story through the Gateway: the client sends `Authorization`, never the
 identity headers, and a folder of its own checks that the boundary holds — no

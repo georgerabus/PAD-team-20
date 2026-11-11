@@ -97,6 +97,10 @@ services:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
       DEFAULT_TIMEOUT_SECONDS: ${BROKER_DEFAULT_TIMEOUT_SECONDS:-10}
+    # Queued events are kept in /data/queues.db until delivered, so they
+    # survive the broker restarting. Images before the durable queues ignore it.
+    volumes:
+      - broker-data:/data
     networks: [backend]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/status', timeout=2)"]
@@ -614,6 +618,7 @@ networks:
   moderation:
 
 volumes:
+  broker-data:
   applicant-db-data:
   credential-db-data:
   server-rules-db-data:
