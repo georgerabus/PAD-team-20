@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Player & Server Moderation Session",
-    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is called to the door, the shift ends, and the SessionCompleted event turns the result into XP. The shift currently scores zero: Session builds the result from Moderation's decision log, and Moderation cannot record a decision until Credential knows the applicant, which waits on ApplicantInitialized being delivered. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nEverything goes through the Gateway. A client sends Authorization: Bearer <token> and the Gateway validates it, drops the header and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request here sets those headers: the Gateway refuses to believe a caller who names itself, which the Gateway boundary folder checks.\n\nTwo base URLs, because a request's privileges come from the door it arrived at. gatewayBaseUrl is the published port, http://127.0.0.1:8080 from your machine. internalBaseUrl is http://gateway:8001, which is not published: it serves the endpoints the contract marks internal, the ones a service calls and a client may not. Reaching it means running inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run player-and-session.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000\n\nRun it from your machine instead and the story still runs, but the five internal requests cannot reach gateway:8001 and fail, along with the assertions downstream of them: scoring needs an outcome reported, and progression needs SessionCompleted delivered.\n\nWS /sessions/{id}/live cannot be part of a collection export. It is the one place a token is still checked by the service, because the client connects to it directly: POST /ws/negotiate at the Gateway returns the URL, ws://127.0.0.1:3011/sessions/<sessionId>/live, and the token goes in ?token= or Authorization. POST /internal/events/session-completed on Player takes SessionCompleted, and Session sends it there itself when a shift ends. The Events folder checks that the shift was counted without anyone delivering the event by hand, then delivers it twice more, once with a new eventId and once with the same one, to show that neither is paid twice.",
+    "description": "Every REST endpoint of both services, run top to bottom as one story: two players register and become friends, a team is formed, the team opens a shift, a junior mod joins and is given records and channels, one applicant is called to the door, the shift ends, and the SessionCompleted event turns the result into XP. The shift currently scores zero: Session builds the result from Moderation's decision log, and Moderation cannot record a decision until Credential knows the applicant, which waits on ApplicantInitialized being delivered. Ids and tokens are carried from one request to the next automatically, so nothing has to be copied by hand.\n\nEverything goes through the Gateway. A client sends Authorization: Bearer <token> and the Gateway validates it, drops the header and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request here sets those headers: the Gateway refuses to believe a caller who names itself, which the Gateway boundary folder checks.\n\nTwo base URLs, because a request's privileges come from the door it arrived at. gatewayBaseUrl is the published port, http://127.0.0.1:8080 from your machine. internalBaseUrl is http://gateway:8001, which is not published: it serves the endpoints the contract marks internal, the ones a service calls and a client may not. Reaching it means running inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run player-and-session.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000\n\nRun it from your machine instead and the story still runs, but the five internal requests cannot reach gateway:8001 and fail, along with the assertions downstream of them: scoring needs an outcome reported, and progression needs SessionCompleted delivered.\n\nWS /sessions/{id}/live cannot be part of a collection export. It is the one place a token is still checked by the service, because the client connects to it directly: POST /ws/negotiate at the Gateway returns the URL, ws://127.0.0.1:3011/sessions/<sessionId>/live, and the token goes in ?token= or Authorization. POST /internal/events/session-completed on Player takes SessionCompleted. Session no longer calls it: when a shift ends it publishes the event to the Message Broker on the topic session.completed, and the broker delivers it to the same handler that endpoint uses. The Events folder checks that the shift was counted without anyone delivering the event by hand, then delivers it twice more, once with a new eventId and once with the same one, to show that neither is paid twice.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -12,6 +12,18 @@
     {
       "key": "internalBaseUrl",
       "value": "http://gateway:8001"
+    },
+    {
+      "key": "brokerBaseUrl",
+      "value": "http://broker:8000"
+    },
+    {
+      "key": "discoveryBaseUrl",
+      "value": "http://service-discovery:8000"
+    },
+    {
+      "key": "messageId",
+      "value": ""
     }
   ],
   "item": [
@@ -1135,7 +1147,8 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "// Nothing has delivered SessionCompleted by hand at this point: Session",
-                  "// sent it to Player when the shift ended, through the internal port.",
+                  "// published it to the broker when the shift ended, on the topic",
+                  "// session.completed, and the broker delivered it.",
                   "pm.test('the shift was counted without anyone delivering the event', () => {",
                   "  pm.expect(pm.response.json().completedShifts).to.eql(1);",
                   "});"
@@ -1305,6 +1318,312 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "pm.test('still one shift, not two', () => pm.expect(pm.response.json().completedShifts).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "The Message Broker",
+      "description": "Four calls between services no longer go through the Gateway. These requests watch the broker that carries them.\n\nNeither the broker nor Service Discovery publishes a port, so these requests only reach them from inside the Docker network \u2014 the same condition the five internal requests in this collection already have. Run the collection with newman on the `pad-team-20_backend` network, as the README describes, and they work; run it from the host and they fail along with the internal ones.\n\n`CreateSession` (Player to Session) and `ListSessionDecisions` (Session to Moderation) travel as gRPC on port 9001 and cannot be sent from this collection. The broker's `POST /messages` carries the same operations as JSON, which is what the two requests below use.",
+      "item": [
+        {
+          "name": "Who is registered, and for which topics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{discoveryBaseUrl}}/services",
+              "host": [
+                "{{discoveryBaseUrl}}"
+              ],
+              "path": [
+                "services"
+              ]
+            },
+            "description": "Service Discovery's registry. Every instance put itself here on startup, naming the topics it subscribes to."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const registry = pm.response.json();",
+                  "// Counting the keys would be wrong: the broker and Service Discovery",
+                  "// register themselves too, so the registry holds ten names, not eight.",
+                  "const domain = ['player', 'session', 'applicant', 'credential',",
+                  "                'rules', 'records', 'moderation', 'dm'];",
+                  "pm.test('every domain service is registered', () => {",
+                  "  domain.forEach(name => pm.expect(registry).to.have.property(name));",
+                  "});",
+                  "pm.test('session and player are both running more than one instance', () => {",
+                  "  pm.expect(registry.session.length).to.be.above(1);",
+                  "  pm.expect(registry.player.length).to.be.above(1);",
+                  "});",
+                  "// The broker reads this same registry to choose an instance, so a",
+                  "// service that is missing here is a service the broker cannot reach."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The topics the broker is carrying",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/topics",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "description": "What the broker knows about who wants which event. `rules.updated` is registered and carries no traffic yet."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const topics = pm.response.json().topics;",
+                  "const byName = Object.fromEntries(topics.map(t => [t.name, t.subscribers]));",
+                  "pm.test('session.completed is delivered to player', () => {",
+                  "  pm.expect(byName['session.completed']).to.include('player');",
+                  "});",
+                  "pm.test('rules.updated is delivered to moderation', () => {",
+                  "  pm.expect(byName['rules.updated']).to.include('moderation');",
+                  "});",
+                  "// Nobody configured these. A service names its topics on",
+                  "// POST /register, and the broker reads them from the registry."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The broker is up and not saturated",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/status",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ok', () => pm.expect(body.status).to.eql('ok'));",
+                  "pm.test('in flight is within the limit', () => {",
+                  "  pm.expect(body.load.inFlight).to.be.at.most(body.load.limit);",
+                  "});",
+                  "// This is the same shape every service answers GET /status with,",
+                  "// which is what lets Service Discovery judge them all alike."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nothing has been given up on",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/dead-letters",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('no dead letters', () => {",
+                  "  pm.expect(pm.response.json().deadLetters).to.be.an('array').that.is.empty;",
+                  "});",
+                  "// An event the broker could not deliver after its retries is parked",
+                  "// here rather than dropped. A non-empty list is the thing to read",
+                  "// first when a shift awarded no progression."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A request through the broker: CreateApplicant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"session\",\n  \"target\": \"applicant\",\n  \"topic\": null,\n  \"operation\": \"CreateApplicant\",\n  \"identity\": null,\n  \"payload\": { \"sessionId\": \"{{sessionId}}\" }\n}"
+            },
+            "description": "This is the envelope Session sends to ask Applicant for the next applicant. The broker picks one instance of `applicant` from the registry; the caller never names an address."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The idempotency key. A receiver that honours it must not apply",
+                  "// the same messageId twice, which is what makes a retry safe.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker accepted and carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "// 200 means the broker carried the message. How the request itself",
+                  "// went is the reply's own status, which is why it is in the body.",
+                  "pm.test('Applicant answered 201', () => pm.expect(reply.status).to.eql(201));",
+                  "pm.test('with an applicant id', () => {",
+                  "  pm.expect(reply.payload).to.have.property('applicantId');",
+                  "});",
+                  "pm.test('the reply is correlated with the request', () => {",
+                  "  pm.expect(reply.correlationId).to.eql(pm.collectionVariables.get('messageId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An event through the broker: SessionCompleted",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"event\",\n  \"source\": \"session\",\n  \"target\": null,\n  \"topic\": \"session.completed\",\n  \"operation\": \"SessionCompleted\",\n  \"identity\": null,\n  \"payload\": {\n    \"eventId\": \"{{eventId}}\",\n    \"type\": \"SessionCompleted\",\n    \"occurredAt\": \"{{$isoTimestamp}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"payload\": { \"sessionId\": \"{{sessionId}}\", \"perPlayer\": {{perPlayer}} }\n  }\n}"
+            },
+            "description": "The same event Session publishes when a shift ends, sent by hand. Run the Events folder first so there is a finished shift to re-announce."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// A fresh event id for a shift Player has already been paid for.",
+                  "pm.collectionVariables.set('eventId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 202, not the 200 a request gets: the broker queues an event and",
+                  "// answers before anyone has received it. Nothing comes back but the",
+                  "// acceptance \u2014 an event has no reply to correlate.",
+                  "pm.test('the broker accepted the event', () => pm.response.to.have.status(202));",
+                  "// An event names no service. `target` is null and the topic decides",
+                  "// who gets it, so this publish reaches Player without Session ever",
+                  "// knowing Player wants it."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The shift is still counted once",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/player/players/{{moderatorId}}/progression",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "player",
+                "players",
+                "{{moderatorId}}",
+                "progression"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('the replayed event awarded nothing twice', () => {",
+                  "  pm.expect(pm.response.json().completedShifts).to.eql(1);",
+                  "});",
+                  "// Player is idempotent on sessionId, so a redelivery from the",
+                  "// broker's queue costs nothing. That is what makes the broker's",
+                  "// retries safe to turn on."
                 ]
               }
             }

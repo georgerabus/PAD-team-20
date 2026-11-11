@@ -8,6 +8,8 @@ A game set in a university Discord server where a moderation team decides who ge
 - [Architecture Diagram](#architecture-diagram)
 - [Technologies and Communication Patterns](#technologies-and-communication-patterns)
 - [Communication Contract](#communication-contract)
+  - [Through the broker](#through-the-broker)
+  - [Service-to-service calls](#service-to-service-calls)
 - [Running the System](#running-the-system)
 - [Monitoring](#monitoring)
 - [GitHub Workflow](#github-workflow)
@@ -72,7 +74,24 @@ answering. It owns no database: the registry is held in memory.
 
 ## Architecture Diagram
 
-Lab 2 deployment topology (configured by common Compose):
+Lab 4 deployment topology. Every box is a container in `docker-compose.yml`:
+
+![Lab 4 deployment topology](docs/images/architecture-lab4.png)
+
+Five kinds of line, because the system now has five ways for one container to
+reach another: REST through the Gateway, a WebSocket straight to the service,
+a call through the Message Broker, registry traffic, and telemetry. The
+drawing is generated — `python3 docs/architecture-lab4.py` rebuilds the PNG
+from the layout in that file, so the diagram cannot quietly fall behind the
+Compose file it describes.
+
+What the picture does not say, and the sections below do: which service calls
+which ([Service-to-service calls](#service-to-service-calls)), what moved onto
+the broker ([Through the broker](#through-the-broker)), and what the
+monitoring containers collect ([Monitoring](#monitoring)).
+
+Lab 2 deployment topology, kept because it is the shape the Gateway was built
+for and the broker did not change it:
 
 ```mermaid
 flowchart LR
@@ -832,18 +851,49 @@ Player, Session, Applicant, Credential, Moderation and Discord DMs register
 today. Server Rules and University Record do not yet, and neither does the
 Gateway, so nothing watches those three. See [Replicas](#replicas).
 
+### Through the broker
+
+Four calls no longer go through the Gateway. The caller names an operation and
+the Message Broker picks an instance of the service that serves it, which is
+why none of these callers carries a circuit breaker of its own.
+
+| Caller | Callee | Operation | How it travels | What it replaced |
+|---|---|---|---|---|
+| Player | Session | `CreateSession` | gRPC 9001, through the broker | `POST /sessions` on `gateway:8001` |
+| Session | Applicant | `CreateApplicant` | envelope on `POST /messages` | `POST /applicants` on `gateway:8001` |
+| Session | Moderation | `ListSessionDecisions` | gRPC 9001, through the broker | `GET /sessions/{id}/decisions` on `gateway:8001` |
+| Session | Player | `SessionCompleted` | event on topic `session.completed` | `POST /internal/events/session-completed` |
+
+The first three are requests with an answer; the fourth is an event, queued by
+topic, retried, and parked as a dead letter if it never lands. A service
+subscribes by naming its topics on `POST /register`, so the broker learns who
+wants an event from Service Discovery and never from configuration.
+
+The two kinds answer differently, and the difference is the point. A request
+is `200` with the reply in the body — including the callee's own status, since
+`200` only means the broker carried the message and says nothing about how the
+call went. An event is `202`: the broker has queued it and answers before
+anyone has received it, and there is no reply to correlate.
+
+One more topic is registered and carries no traffic yet: `rules.updated`, with
+Moderation subscribed. The broker lists it at `GET /topics`; nothing has
+published to it.
+
+An operation arrives two ways — an envelope on `POST /broker/deliver` and a
+gRPC method of the same name — and both are handed to the same handler, which
+is also the one behind the REST endpoint it replaced. The three ways in cannot
+answer differently, because only one of them decides anything.
+
 ### Service-to-service calls
 
-Every call between services is synchronous REST through the Gateway's internal
-port. There is no broker.
+Everything else between services is still synchronous REST through the
+Gateway's internal port 8001. There is no fallback between the two: a call
+that moved to the broker fails as a broker call, and does not quietly retry
+itself over REST.
 
 | Caller | Callee | Purpose |
 |---|---|---|
-| Player | Session | `POST /sessions` — open a session for a team, with its roster |
 | Session | Server Rules | `POST /rules` — rule set for the shift that is starting |
-| Session | Applicant | `POST /applicants` — request the next applicant |
-| Session | Moderation | `GET /sessions/{id}/decisions` — decision log for the final result |
-| Session | Player | `POST /internal/events/session-completed` — the shift result |
 | Applicant, Credential, University Record | The other two | `POST /applicants` — hand over the story of an applicant it started |
 | Moderation | Applicant | `GET /applicants/{id}` — claim and deception |
 | Moderation | Credential | `POST /applicants/{id}/credentials/validate` — are the documents sound |
@@ -949,9 +999,26 @@ shift, whichever replica holds its socket.
 
 Each publishes one WebSocket port per replica, from `DM_WS_PORT` to
 `DM_WS_PORT_LAST` and from `SESSION_WS_PORT` to `SESSION_WS_PORT_LAST`. Each
-range must hold at least that service's replica count. The first replica takes
-the first port, which is the address `/ws/negotiate` hands out; because the
-events reach every replica, that one address serves all of them.
+range must hold at least that service's replica count. Because the events reach
+every replica, one address serves all of them, and that is the one
+`/ws/negotiate` hands out: `SESSION_PUBLIC_WS_BASE_URL`, which defaults to the
+first port of the range.
+
+**Docker does not promise to use the first port of a range, and often does
+not.** It assigns each replica whichever port in the range is free when that
+container starts, so a replica that was recreated, or started after another
+took the port, lands further along. Two Session replicas on `3011-3013`
+currently hold `3012` and `3013`, and nothing listens on `3011` — so the URL
+`/ws/negotiate` hands out refuses the connection, while the sockets themselves
+are fine. Check what is actually bound before demonstrating a WebSocket:
+
+```bash
+docker compose ps --format "{{.Service}} {{.Publishers}}" | grep -E "session|dm-service"
+```
+
+and set `SESSION_PUBLIC_WS_BASE_URL` (or `DM_PUBLIC_WS_BASE_URL`) to a port
+that is listening. Pinning a replica count of 1 with a single-port range avoids
+the question entirely.
 
 Gateway still reaches each service by its Compose name, which Docker resolves to
 every replica's address. Reading the instances from Service Discovery and
@@ -985,6 +1052,16 @@ docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \
 Run it from the host instead and the client story still runs against
 `http://127.0.0.1:8080`, but those five requests cannot reach the internal
 listener and fail, along with the assertions that depend on them.
+
+Its **The Message Broker** folder watches the four calls that left the
+Gateway: who is registered and for which topics, what the broker is carrying,
+whether anything has been given up on as a dead letter, and both envelope
+kinds sent by hand — a `CreateApplicant` request that comes back with an
+applicant id, and a `SessionCompleted` event replayed onto
+`session.completed`, after which the shift is still counted once. The broker
+and Service Discovery publish no port either, so that folder has the same
+condition as the five internal requests: inside the network it passes, from
+the host it cannot connect.
 
 `postman/applicant-and-credential.postman_collection.json` follows the same
 rules and runs the same way, under its own file name. It opens a real session
