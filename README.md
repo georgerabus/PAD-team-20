@@ -1071,14 +1071,18 @@ session token, and a folder of its own checking that identity headers the
 caller sets and internal paths are refused on the published port.
 
 `postman/dm-and-moderation.postman_collection.json` runs one shift through
-Discord DMs and Moderation with real tokens: channels, messages and shared
-evidence in DM, the moderator's decision in Moderation, and Session counting
-it. It also covers the WebSockets: it negotiates DM's and Session's sockets
-through the Gateway's `POST /ws/negotiate`, and checks that both ports speak only
-WebSocket (`426` to plain HTTP) and that DM checks the token on the handshake
-(`401`, `403`). Newman cannot hold a socket open, so the collection saves the
-negotiated `dmSocketUrl` and `sessionSocketUrl` for a live demo in Postman's
-WebSocket tab.
+Discord DMs and Moderation with real tokens, checks DM's and Session's
+WebSocket ports (`426`, `401`, `403`), and saves `dmSocketUrl` and
+`sessionSocketUrl` for a live demo in Postman. Its last folder covers Lab 4:
+both services' topics and `GET /logs`, the same calls sent to the broker as
+`HttpRequest` envelopes, and a `RulesUpdated` event sent twice. It runs inside
+the Docker network:
+
+```bash
+docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \
+  postman/newman run dm-and-moderation.postman_collection.json \
+  --env-var gatewayBaseUrl=http://gateway:8000
+```
 
 The remaining collections were written for earlier direct-service setups and have
 not all been migrated. Run `tests/verify_compose_gateway.py` for the full
