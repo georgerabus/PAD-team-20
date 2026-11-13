@@ -1,10 +1,17 @@
 {
   "info": {
     "name": "Discord DMs & Moderation",
-    "description": "Discord DMs and Moderation through the Gateway, run top to bottom as one shift: a moderator and a junior mod register, a team opens a shift, the junior mod is given records and channels, both negotiate the shift's WebSockets, an applicant is called, the team talks and shares evidence in Discord DMs, and the moderator decides. Ids and tokens are carried from one request to the next automatically.\n\nEverything goes through the Gateway's public port with real tokens: Authorization: Bearer <token>. The Gateway validates it, drops it and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request sets those headers to be believed; the last folder checks that the Gateway ignores them.\n\nWebSockets. A client asks the Gateway for an address (POST /ws/negotiate) and then connects to the service directly, so the Gateway is never in the middle of a socket. Folder 1 negotiates Discord DMs' chat socket and Session's live socket, checks that both ports speak only WebSocket (426 to plain HTTP) and that DM checks the token on the handshake itself (401, 403). Newman and the collection runner cannot hold a socket open, so a successful handshake is left to the live demo below. Moderation has no socket of its own: its decisions reach the players through Session's live socket, as score_updated.\n\nLive demo in the Postman app:\n1. Run folders 0 and 1, then copy the collection variables dmSocketUrl and sessionSocketUrl (current values).\n2. New > WebSocket, paste sessionSocketUrl, Connect. Open a second WebSocket tab with dmSocketUrl and send {\"type\":\"join\",\"channelId\":\"<generalChannelId>\"}: a presence frame comes back.\n3. Run folders 2 and 3: Session's socket shows shift_started and applicant_changed; DM's socket shows each message and shared document as it is posted. Sending {\"type\":\"message\",\"channelId\":\"<generalChannelId>\",\"content\":\"hi\"} on the socket posts too.\n4. Run folder 4: \"Moderator decides\" makes Session's socket push score_updated.\nThe two URLs carry a real session token: never save them into an exported collection.\n\nRun it from your machine against the team stack (docker compose up). The defaults match .env.example: the Gateway on http://127.0.0.1:8080, and the WebSocket addresses are whatever the Gateway returns (127.0.0.1:3002 for DM, 3011 for Session). Nothing here uses the internal port 8001, so it does not need to run inside the Docker network:\n\n    npx newman run postman/dm-and-moderation.postman_collection.json\n\nUniversity Record does not yet learn of new applicants, so the junior mod shares the academic year, a record every session can read, rather than the applicant's enrollment.",
+    "description": "Discord DMs and Moderation through the Gateway, run top to bottom as one shift: a moderator and a junior mod register, a team opens a shift, the junior mod is given records and channels, both negotiate the shift's WebSockets, an applicant is called, the team talks and shares evidence in Discord DMs, and the moderator decides. Ids and tokens are carried from one request to the next automatically.\n\nEverything goes through the Gateway's public port with real tokens: Authorization: Bearer <token>. The Gateway validates it, drops it and tells the service who is calling through X-Player-Id, X-Session-Id, X-Session-Role and X-Record-Access. No request sets those headers to be believed; the last folder checks that the Gateway ignores them.\n\nWebSockets. A client asks the Gateway for an address (POST /ws/negotiate) and then connects to the service directly, so the Gateway is never in the middle of a socket. Folder 1 negotiates Discord DMs' chat socket and Session's live socket, checks that both ports speak only WebSocket (426 to plain HTTP) and that DM checks the token on the handshake itself (401, 403). Newman and the collection runner cannot hold a socket open, so a successful handshake is left to the live demo below. Moderation has no socket of its own: its decisions reach the players through Session's live socket, as score_updated.\n\nLive demo in the Postman app:\n1. Run folders 0 and 1, then copy the collection variables dmSocketUrl and sessionSocketUrl (current values).\n2. New > WebSocket, paste sessionSocketUrl, Connect. Open a second WebSocket tab with dmSocketUrl and send {\"type\":\"join\",\"channelId\":\"<generalChannelId>\"}: a presence frame comes back.\n3. Run folders 2 and 3: Session's socket shows shift_started and applicant_changed; DM's socket shows each message and shared document as it is posted. Sending {\"type\":\"message\",\"channelId\":\"<generalChannelId>\",\"content\":\"hi\"} on the socket posts too.\n4. Run folder 4: \"Moderator decides\" makes Session's socket push score_updated.\nThe two URLs carry a real session token: never save them into an exported collection.\n\nFolder 6 talks to the broker, Service Discovery and the services directly, and none of them publishes a port, so run the collection from inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" postman/newman run dm-and-moderation.postman_collection.json --env-var gatewayBaseUrl=http://gateway:8000\n\nInside the network the sockets published on 127.0.0.1 do not exist, so folder 1 checks DM and Session on their own addresses there (dm-service:3001, session:3011).\n\nFrom your machine (npx newman run postman/dm-and-moderation.postman_collection.json), folders 0 to 5 still run against the Gateway on http://127.0.0.1:8080, the default in .env.example, and the WebSocket addresses the Gateway returns (127.0.0.1:3002 for DM, 3011 for Session); folder 6 cannot connect and fails.\n\nUniversity Record does not yet learn of new applicants, so the junior mod shares the academic year, a record every session can read, rather than the applicant's enrollment.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
-  "variable": [{"key": "gatewayBaseUrl", "value": "http://127.0.0.1:8080"}],
+  "variable": [
+    {"key": "gatewayBaseUrl", "value": "http://127.0.0.1:8080"},
+    {"key": "brokerBaseUrl", "value": "http://broker:8000"},
+    {"key": "discoveryBaseUrl", "value": "http://service-discovery:8000"},
+    {"key": "dmBaseUrl", "value": "http://dm-service:3000"},
+    {"key": "moderationBaseUrl", "value": "http://moderation-service:3000"},
+    {"key": "messageId", "value": ""}
+  ],
   "item": [
     {
       "name": "0. Setup: players, a team and a shift",
@@ -210,7 +217,9 @@
                   "pm.test('no token in the negotiated address', () => pm.expect(url).to.not.include('token='));",
                   "// For a live demo: paste dmSocketUrl into a Postman WebSocket request.",
                   "v.set('dmSocketUrl', url + '&token=' + v.get('moderatorSessionToken'));",
-                  "v.set('dmSocketHttpBase', url.replace(/^ws/, 'http').match(/^https?:\\/\\/[^/]+/)[0]);"
+                  "// Inside the Docker network the published 127.0.0.1 address does not exist: use DM's own.",
+                  "const inNetwork = !/127\\.0\\.0\\.1|localhost/.test(pm.variables.get('gatewayBaseUrl'));",
+                  "v.set('dmSocketHttpBase', inNetwork ? 'http://dm-service:3001' : url.replace(/^ws/, 'http').match(/^https?:\\/\\/[^/]+/)[0]);"
                 ]
               }
             }
@@ -239,7 +248,9 @@
                   "pm.test('Session\\'s live socket for this shift', () => pm.expect(url).to.include('/sessions/' + v.get('sessionId') + '/live'));",
                   "// Moderation's decisions show up here as score_updated.",
                   "v.set('sessionSocketUrl', url + '?token=' + v.get('moderatorSessionToken'));",
-                  "v.set('sessionSocketHttpBase', url.replace(/^ws/, 'http').match(/^https?:\\/\\/[^/]+/)[0]);"
+                  "// Inside the Docker network the published 127.0.0.1 address does not exist: use Session's own.",
+                  "const inNetwork = !/127\\.0\\.0\\.1|localhost/.test(pm.variables.get('gatewayBaseUrl'));",
+                  "v.set('sessionSocketHttpBase', inNetwork ? 'http://session:3011' : url.replace(/^ws/, 'http').match(/^https?:\\/\\/[^/]+/)[0]);"
                 ]
               }
             }
@@ -592,7 +603,19 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('credentialId', pm.response.json()[0].credentialId);"
+                  "const v = pm.collectionVariables;",
+                  "const documents = pm.response.code === 200 ? pm.response.json() : [];",
+                  "pm.test('a list of documents', () => pm.expect(documents).to.be.an('array'));",
+                  "// Which applicant the shift calls is random, and an outsider has no university",
+                  "// documents at all, so an empty list is a correct answer. Then there is nothing",
+                  "// to share: skip the two document shares, and the history expects no document.",
+                  "v.set('hasDocument', String(documents.length > 0));",
+                  "if (documents.length) {",
+                  "  v.set('credentialId', documents[0].credentialId);",
+                  "} else {",
+                  "  console.log('The applicant has no documents: skipping the two document shares.');",
+                  "  postman.setNextRequest('Junior mod shares the academic year (University Record)');",
+                  "}"
                 ]
               }
             }
@@ -694,7 +717,9 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const sources = pm.response.json().map((m) => m.attachment ? m.attachment.source : 'text');",
-                  "pm.test('newest first: academic year, document, text', () => pm.expect(sources).to.eql(['academic-year', 'credential', 'text']));"
+                  "// The document share was skipped when the applicant had no documents.",
+                  "const expected = pm.collectionVariables.get('hasDocument') === 'false' ? ['academic-year', 'text'] : ['academic-year', 'credential', 'text'];",
+                  "pm.test('newest first: ' + expected.join(', '), () => pm.expect(sources).to.eql(expected));"
                 ]
               }
             }
@@ -923,6 +948,689 @@
             ],
             "url": "{{gatewayBaseUrl}}/dm/sessions/{{sessionId}}/channels",
             "body": {"mode": "raw", "raw": "{\n  \"names\": [\n    \"not-allowed\"\n  ]\n}"}
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Logs, topics and the broker",
+      "description": "What Lab 4 added to Discord DMs and Moderation: GET /logs on each replica, the topics they subscribe to, and messages through the Message Broker. The Gateway's public calls can travel as an HttpRequest envelope instead of over HTTP; these requests send that envelope by hand, so the answers can be compared with folders 3 and 4. Moderation also receives RulesUpdated events from the broker.\n\nThe broker, Service Discovery and the services publish no port, so this folder only works from inside the Docker network, as the README describes. ListSessionDecisions travels as gRPC on the broker's port 9001, which Newman cannot send.",
+      "item": [
+        {
+          "name": "DM and Moderation are registered, with their topics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const entry = pm.response.json();",
+                  "pm.test('more than one replica', () => pm.expect(entry.instances.length).to.be.above(1));",
+                  "pm.test('subscribed to rules.updated', () => pm.expect(entry.topics).to.include('rules.updated'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{discoveryBaseUrl}}/services/moderation",
+              "host": [
+                "{{discoveryBaseUrl}}"
+              ],
+              "path": [
+                "services",
+                "moderation"
+              ]
+            },
+            "description": "Service Discovery's entry for Moderation: every replica, and the topics it named on registration. Moderation subscribes to rules.updated, so the broker delivers that topic's events to it."
+          }
+        },
+        {
+          "name": "DM is registered too, subscribing to nothing yet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const entry = pm.response.json();",
+                  "pm.test('more than one replica', () => pm.expect(entry.instances.length).to.be.above(1));",
+                  "pm.test('no topics', () => pm.expect(entry.topics).to.eql([]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{discoveryBaseUrl}}/services/dm",
+              "host": [
+                "{{discoveryBaseUrl}}"
+              ],
+              "path": [
+                "services",
+                "dm"
+              ]
+            },
+            "description": "DM receives no events yet, so it names no topics; the broker still finds its replicas here for requests."
+          }
+        },
+        {
+          "name": "DM's recent logs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('newline-delimited JSON', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/x-ndjson'));",
+                  "const lines = pm.response.text().split('\\n').filter(Boolean).map((l) => JSON.parse(l));",
+                  "pm.test('at most the limit', () => pm.expect(lines.length).to.be.within(1, 20));",
+                  "pm.test('every line has the shared fields', () => lines.forEach((l) => pm.expect(l).to.have.all.keys('ts', 'level', 'context', 'message', 'instance')));",
+                  "pm.test('oldest first', () => pm.expect(lines.map((l) => l.ts)).to.eql(lines.map((l) => l.ts).sort()));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{dmBaseUrl}}/logs?level=log&limit=20",
+              "host": [
+                "{{dmBaseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "level",
+                  "value": "log"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "GET /logs on one DM replica: its most recent lines, oldest first, one JSON object per line {ts, level, context, message, instance}. Not reachable through the Gateway; Service Discovery's /logs/all collects every replica's."
+          }
+        },
+        {
+          "name": "Moderation's warnings and errors only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const lines = pm.response.text().split('\\n').filter(Boolean).map((l) => JSON.parse(l));",
+                  "pm.test('nothing below warn', () => lines.forEach((l) => pm.expect(['warn', 'error', 'fatal']).to.include(l.level)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{moderationBaseUrl}}/logs?level=warn&limit=50",
+              "host": [
+                "{{moderationBaseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "level",
+                  "value": "warn"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "level is the lowest severity kept: warn returns warnings and errors, such as the refused decisions of folder 4."
+          }
+        },
+        {
+          "name": "The moderator lists channels, through the broker",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('the reply is correlated with the request', () => pm.expect(reply.inReplyTo).to.eql(pm.collectionVariables.get('messageId')));",
+                  "pm.test('answered by dm', () => pm.expect(reply.source).to.eql('dm'));",
+                  "pm.test('the route answered 200', () => pm.expect(reply.status).to.eql(200));",
+                  "pm.test('as JSON', () => pm.expect(reply.payload.headers['content-type']).to.include('application/json'));",
+                  "pm.test('the same channels as over HTTP', () => pm.expect(reply.payload.body.map((c) => c.channelId)).to.include(pm.collectionVariables.get('generalChannelId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"dm\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {\n    \"method\": \"GET\",\n    \"path\": \"/sessions/{{sessionId}}/channels\",\n    \"query\": \"\",\n    \"headers\": {\n      \"accept\": \"application/json\"\n    },\n    \"body\": null\n  }\n}"
+            },
+            "description": "The Gateway's HttpRequest: the same public call as folder 3, sent as an envelope instead of over HTTP. DM makes the call to its own route, so the same guards and Session's access-check apply. The reply's status is the HTTP status, and its payload is {headers, body}."
+          }
+        },
+        {
+          "name": "The junior mod still sees only its channels, through the broker",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('the route answered 200', () => pm.expect(reply.status).to.eql(200));",
+                  "pm.test('only the assigned channels', () => pm.expect(reply.payload.body.map((c) => c.name)).to.have.members(['enrollment-check', 'general-mod-chat']));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"dm\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{juniorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"junior_mod\",\n    \"recordAccess\": [\n      \"enrollment\"\n    ]\n  },\n  \"payload\": {\n    \"method\": \"GET\",\n    \"path\": \"/sessions/{{sessionId}}/channels\",\n    \"query\": \"\",\n    \"headers\": {},\n    \"body\": null\n  }\n}"
+            },
+            "description": "The identity in the envelope becomes the identity headers DM's routes read, so Session's access-check decides exactly as it does over HTTP."
+          }
+        },
+        {
+          "name": "The channel history, with its query string unchanged",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('the route answered 200', () => pm.expect(reply.status).to.eql(200));",
+                  "pm.test('limit=1 was applied', () => pm.expect(reply.payload.body).to.have.lengthOf(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"dm\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {\n    \"method\": \"GET\",\n    \"path\": \"/channels/{{generalChannelId}}/messages\",\n    \"query\": \"limit=1\",\n    \"headers\": {},\n    \"body\": null\n  }\n}"
+            },
+            "description": "query is the raw string after ?, exactly as the client sent it; DM parses it as it would a URL."
+          }
+        },
+        {
+          "name": "The shift's decision log, through the broker",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('answered by moderation', () => pm.expect(reply.source).to.eql('moderation'));",
+                  "pm.test('the route answered 200', () => pm.expect(reply.status).to.eql(200));",
+                  "pm.test('holds the decision', () => pm.expect(reply.payload.body.map((d) => d.decisionId)).to.eql([pm.collectionVariables.get('decisionId')]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"moderation\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {\n    \"method\": \"GET\",\n    \"path\": \"/sessions/{{sessionId}}/decisions\",\n    \"query\": \"\",\n    \"headers\": {},\n    \"body\": null\n  }\n}"
+            },
+            "description": "The same call as folder 4, to Moderation."
+          }
+        },
+        {
+          "name": "A route that refuses is a normal reply",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('the route answered 404', () => pm.expect(reply.status).to.eql(404));",
+                  "pm.test('its error is in the body', () => pm.expect(reply.payload.body.error).to.eql('DECISION_NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"moderation\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {\n    \"method\": \"GET\",\n    \"path\": \"/decisions/{{$guid}}\",\n    \"query\": \"\",\n    \"headers\": {},\n    \"body\": null\n  }\n}"
+            },
+            "description": "The route's own answer, with its error in payload.body, just as over HTTP. The Gateway passes it on as it is."
+          }
+        },
+        {
+          "name": "A malformed HttpRequest is a protocol error",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('422', () => pm.expect(reply.status).to.eql(422));",
+                  "pm.test('VALIDATION_FAILED, naming query', () => {",
+                  "  pm.expect(reply.payload.error).to.eql('VALIDATION_FAILED');",
+                  "  pm.expect(reply.payload.details.fields).to.have.property('query');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"dm\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {\n    \"method\": \"GET\",\n    \"path\": \"/sessions/{{sessionId}}/channels\",\n    \"query\": {\n      \"limit\": \"1\"\n    }\n  }\n}"
+            },
+            "description": "Only a call the service cannot make at all has error directly in the payload. Here query is an object, not the raw string."
+          }
+        },
+        {
+          "name": "An operation DM does not handle",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('404', () => pm.expect(reply.status).to.eql(404));",
+                  "pm.test('UNKNOWN_OPERATION', () => pm.expect(reply.payload.error).to.eql('UNKNOWN_OPERATION'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"dm\",\n  \"topic\": null,\n  \"operation\": \"DeleteEverything\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {}\n}"
+            },
+            "description": "A protocol error too: UNKNOWN_OPERATION, with error directly in the payload."
+          }
+        },
+        {
+          "name": "HttpRequest never reaches the broker's own endpoint",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the broker carried it', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('403', () => pm.expect(reply.status).to.eql(403));",
+                  "pm.test('INTERNAL_ENDPOINT', () => pm.expect(reply.payload.body.error).to.eql('INTERNAL_ENDPOINT'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"request\",\n  \"source\": \"gateway\",\n  \"target\": \"dm\",\n  \"topic\": null,\n  \"operation\": \"HttpRequest\",\n  \"identity\": {\n    \"playerId\": \"{{moderatorId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"sessionRole\": \"moderator\",\n    \"recordAccess\": []\n  },\n  \"payload\": {\n    \"method\": \"POST\",\n    \"path\": \"/broker/deliver\",\n    \"query\": \"\",\n    \"headers\": {},\n    \"body\": {}\n  }\n}"
+            },
+            "description": "POST /broker/deliver trusts the identity in the envelope, so it is never reachable as a public route."
+          }
+        },
+        {
+          "name": "RulesUpdated, as Server Rules publishes it",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new idempotency key for every send.",
+                  "pm.collectionVariables.set('messageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('for moderation', () => pm.expect(pm.response.json().subscribers).to.include('moderation'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"event\",\n  \"source\": \"rules\",\n  \"target\": null,\n  \"topic\": \"rules.updated\",\n  \"operation\": \"RulesUpdated\",\n  \"identity\": null,\n  \"payload\": {\n    \"sessionId\": \"{{sessionId}}\",\n    \"ruleSetVersion\": 1\n  }\n}"
+            },
+            "description": "An event on rules.updated. The broker answers 202 at once, with the subscribers it will deliver to, and keeps the event on disk until Moderation acknowledges it. ruleSetVersion 1 is never newer than what Moderation already has, so it changes nothing."
+          }
+        },
+        {
+          "name": "The same event again is accepted and not applied twice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('the same messageId', () => pm.expect(pm.response.json().messageId).to.eql(pm.collectionVariables.get('messageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/messages",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"correlationId\": \"{{messageId}}\",\n  \"kind\": \"event\",\n  \"source\": \"rules\",\n  \"target\": null,\n  \"topic\": \"rules.updated\",\n  \"operation\": \"RulesUpdated\",\n  \"identity\": null,\n  \"payload\": {\n    \"sessionId\": \"{{sessionId}}\",\n    \"ruleSetVersion\": 1\n  }\n}"
+            },
+            "description": "The same messageId: Moderation records it in processed_events and answers the redelivery as it did the first time, without applying it again (its log says \"was already applied\")."
+          }
+        },
+        {
+          "name": "Nothing for DM or Moderation was given up on",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const letters = Array.isArray(body) ? body : body.deadLetters;",
+                  "pm.test('none for this shift', () => pm.expect(letters.filter((d) => d.envelope && d.envelope.payload && d.envelope.payload.sessionId === pm.collectionVariables.get('sessionId'))).to.eql([]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerBaseUrl}}/dead-letters?topic=rules.updated",
+              "host": [
+                "{{brokerBaseUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "topic",
+                  "value": "rules.updated"
+                }
+              ]
+            },
+            "description": "An event goes to the dead-letter channel only when every delivery attempt failed or its deadline passed. Moderation acknowledged both, so none is here."
           }
         }
       ]

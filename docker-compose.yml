@@ -255,7 +255,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.0.0}
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.3.0}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -274,6 +274,11 @@ services:
       SESSION_URL: http://gateway:8001/session
       CREDENTIAL_URL: http://gateway:8001/credential
       UNIVERSITY_RECORD_URL: http://gateway:8001/records
+      # Set to broker:9001 to read shared records with University Record's
+      # /pad.records.v1.Records/GetRecord through the broker instead of the
+      # REST call above. Needs a University Record image from 4.0.0-rc.1 on;
+      # empty keeps REST.
+      RECORDS_GRPC_ADDRESS: ${DM_RECORDS_GRPC_ADDRESS:-}
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     volumes:
@@ -315,7 +320,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.0.0}
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.3.0}
     depends_on:
       moderation-db:
         condition: service_healthy
