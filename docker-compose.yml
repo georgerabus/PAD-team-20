@@ -281,6 +281,12 @@ services:
       # DM_RECORDS_GRPC_ADDRESS overrides the address; set it empty to fall
       # back to REST.
       RECORDS_GRPC_ADDRESS: ${DM_RECORDS_GRPC_ADDRESS-broker:9001}
+      # Shared documents are read with Credential's
+      # /pad.credential.v1.Credential/GetCredential through the broker instead
+      # of CREDENTIAL_URL above. Needs a Credential image from 4.0.0-rc.2 on.
+      # DM_CREDENTIAL_GRPC_ADDRESS overrides the address; set it empty to fall
+      # back to REST.
+      CREDENTIAL_GRPC_ADDRESS: ${DM_CREDENTIAL_GRPC_ADDRESS-broker:9001}
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     volumes:
@@ -341,6 +347,12 @@ services:
       # broker instead of SERVER_RULES_URL above. Needs a Server Rules image
       # from 4.0.0-rc.3 on; remove it to fall back to REST.
       SERVER_RULES_GRPC_ADDRESS: broker:9001
+      # GetApplicant and ValidateCredentials go to Applicant and Credential
+      # through the broker instead of APPLICANT_URL and CREDENTIAL_URL above.
+      # Need Applicant and Credential images from 4.0.0-rc.2 on; remove them to
+      # fall back to REST.
+      APPLICANT_GRPC_ADDRESS: broker:9001
+      CREDENTIAL_GRPC_ADDRESS: broker:9001
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     deploy:
