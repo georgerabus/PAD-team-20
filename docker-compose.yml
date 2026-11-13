@@ -130,7 +130,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0-rc.1}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0-rc.2}
     depends_on:
       player-db:
         condition: service_healthy
