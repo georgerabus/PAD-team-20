@@ -40,6 +40,16 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
       MAX_CONCURRENT_INTERNAL_REQUESTS: ${GATEWAY_MAX_CONCURRENT_INTERNAL_REQUESTS:-100}
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      # GET /logs on the public port is the whole system's log, read from
+      # Loki. It takes this operator token in X-Logs-Token rather than a
+      # player's: the lines carry what no player may see, such as which
+      # applicant is an impostor. Unset, it refuses every request.
+      LOGS_TOKEN: ${LOGS_TOKEN:-}
+      LOKI_URL: http://loki:3100
+      # Where spans go: Tempo, started with the monitoring profile. Empty, trace
+      # ids are still made, passed on and logged; only the export is off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - ${PAD_KEYS_DIR:-./keys}/player/public.pem:/app/keys/player-public.pem:ro
       - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
@@ -64,16 +74,9 @@ services:
       # log is the only record.
       LOAD_CRITICAL_RATIO: ${LOAD_CRITICAL_RATIO:-0.8}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
-      # The operator token for GET /logs/all, which collects every instance's
-      # logs. Unset, that endpoint refuses every request: the collected lines
-      # carry what no player may see, such as which applicant is an impostor.
-      LOGS_TOKEN: ${LOGS_TOKEN:-}
-      # The Gateway does not register itself, so its lines are only collected
-      # if it is named here. Its internal listener, 8001: from 4.0.0-rc.1 on,
-      # the Gateway serves its own /logs there only and answers 403 on 8000.
-      LOGS_EXTRA_INSTANCES: ${LOGS_EXTRA_INSTANCES:-gateway=http://gateway:8001}
-      # For the same reason, on the metrics side: the Gateway is the front
-      # door every client request passes through, so leaving it off the
+      # The Gateway does not register itself, so it is named here to be on the
+      # dashboard: it is the front door every client request passes through,
+      # and leaving it off the
       # dashboard would hide the busiest component in the system. Watched
       # only — nothing here puts it in the registry.
       METRICS_EXTRA_INSTANCES: ${METRICS_EXTRA_INSTANCES:-gateway=http://gateway:8000}
@@ -99,6 +102,13 @@ services:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
       DEFAULT_TIMEOUT_SECONDS: ${BROKER_DEFAULT_TIMEOUT_SECONDS:-10}
+      # Where the `logs` topic goes: every service's lines, sent as LogBatch
+      # events, are written into Loki as source="broker". That is what the
+      # Gateway's GET /logs downloads.
+      LOKI_URL: http://loki:3100
+      # Where spans go: Tempo, started with the monitoring profile. Empty, trace
+      # ids are still made, passed on and logged; only the export is off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     # Queued events are kept in /data/queues.db until delivered, so they
     # survive the broker restarting. Images before the durable queues ignore it.
     volumes:
@@ -143,6 +153,9 @@ services:
       SESSION_BASE_URL: http://gateway:8001/session
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      # Where spans go: Tempo, started with the monitoring profile. Empty, trace
+      # ids are still made, passed on and logged; only the export is off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       DB_HOST: player-db
       DB_PORT: 5432
       DB_NAME: player
@@ -213,6 +226,9 @@ services:
       SERVER_RULES_TRANSPORT: ${SERVER_RULES_TRANSPORT:-grpc}
       # Every replica registers here on startup as http://$HOSTNAME:3001.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      # Where spans go: Tempo, started with the monitoring profile. Empty, trace
+      # ids are still made, passed on and logged; only the export is off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       DB_HOST: session-db
       DB_PORT: 5432
       DB_NAME: session
@@ -567,18 +583,22 @@ services:
       # volume does not grow without anyone noticing.
       - --storage.tsdb.retention.time=48h
       - --web.enable-lifecycle
+      # Tempo writes the service graph and span metrics here.
+      - --web.enable-remote-write-receiver
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     networks: [backend]
     restart: unless-stopped
 
-  # Holds the lines. One process, filesystem storage: this watches eleven
-  # services on one machine, and a clustered log store would be more moving
-  # parts than the thing being monitored.
+  # Holds the lines: the system's log store, which the Gateway's GET /logs
+  # reads from. Not in the monitoring profile, unlike the dashboards: logs are
+  # part of the system, and the download must work without Grafana running.
+  # One process, filesystem storage: this watches eleven services on one
+  # machine, and a clustered log store would be more moving parts than the
+  # thing being monitored.
   loki:
     image: grafana/loki:3.3.2
-    profiles: [monitoring]
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
       - ./monitoring/loki-config.yaml:/etc/loki/loki-config.yaml:ro
@@ -591,7 +611,6 @@ services:
   # `--scale player=4` is collected from without any config change.
   promtail:
     image: grafana/promtail:3.3.2
-    profiles: [monitoring]
     command: -config.file=/etc/promtail/promtail-config.yaml
     volumes:
       - ./monitoring/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
@@ -600,6 +619,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-data:/promtail
     depends_on: [loki]
+    networks: [backend]
+    restart: unless-stopped
+
+  # Holds the spans: one request as a timeline across every service it
+  # reached. Services send them over OTLP/HTTP on 4318. Its metrics generator
+  # turns spans into the service graph and request rates, written to
+  # Prometheus.
+  tempo:
+    image: grafana/tempo:2.6.1
+    profiles: [monitoring]
+    command: -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ./monitoring/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
     networks: [backend]
     restart: unless-stopped
 
@@ -635,7 +668,7 @@ services:
       # Not 3000: the NestJS services already use it inside the network, and
       # it is the port most likely to be taken on a developer's machine.
       - "127.0.0.1:${GRAFANA_PORT:-3300}:3000"
-    depends_on: [prometheus, loki]
+    depends_on: [prometheus, loki, tempo]
     networks: [backend]
     restart: unless-stopped
 
@@ -666,3 +699,4 @@ volumes:
   loki-data:
   promtail-data:
   grafana-data:
+  tempo-data:

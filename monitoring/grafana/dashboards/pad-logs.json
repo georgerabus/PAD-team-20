@@ -1,0 +1,321 @@
+{
+  "uid": "pad-logs",
+  "title": "PAD Team 20 — Logs",
+  "description": "The whole system's log: every service's lines in one place, the errors with their stacks, and one request followed across every service by its trace id.",
+  "tags": [
+    "pad-team-20",
+    "logs"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "source",
+        "label": "Source",
+        "type": "custom",
+        "query": "stdout,broker",
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "stdout",
+          "value": "stdout"
+        },
+        "options": []
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "pad-loki"
+        },
+        "query": {
+          "label": "service",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "",
+          "type": 1
+        },
+        "definition": "label_values(service)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "level",
+        "label": "Level",
+        "type": "custom",
+        "query": "verbose,debug,log,warn,error,fatal",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "log",
+            "warn",
+            "error",
+            "fatal"
+          ],
+          "value": [
+            "log",
+            "warn",
+            "error",
+            "fatal"
+          ]
+        },
+        "options": []
+      },
+      {
+        "name": "traceId",
+        "label": "Trace id (from X-Trace-Id)",
+        "type": "textbox",
+        "query": "paste-a-trace-id",
+        "current": {
+          "text": "paste-a-trace-id",
+          "value": "paste-a-trace-id"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Lines per service",
+      "description": "How much each service is writing. A service that goes quiet while the others carry on has usually stopped, not calmed down.",
+      "datasource": {
+        "type": "loki",
+        "uid": "pad-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "pad-loki"
+          },
+          "expr": "sum by (service) (count_over_time({source=\"$source\", service=~\"$service\", level=~\"$level\"} [$__auto]))",
+          "legendFormat": "{{service}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Warnings and errors per service",
+      "description": "Lines at warn or worse. Warnings are refusals the system chose (a wrong token, a full queue); errors are failures nobody chose.",
+      "datasource": {
+        "type": "loki",
+        "uid": "pad-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "pad-loki"
+          },
+          "expr": "sum by (service, level) (count_over_time({source=\"$source\", service=~\"$service\", level=~\"warn|error|fatal\"} [$__auto]))",
+          "legendFormat": "{{service}} {{level}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "One request, across every service",
+      "description": "Paste the X-Trace-Id the Gateway returned into the box above: every line written for that request, from every service it reached, in order. Each line links to the request's timeline in Tempo. Until an id is pasted, it shows nothing.",
+      "datasource": {
+        "type": "loki",
+        "uid": "pad-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "pad-loki"
+          },
+          "expr": "{source=\"$source\", service=~\".+\"} |= \"$traceId\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "showCommonLabels": false,
+        "showLabels": true
+      }
+    },
+    {
+      "id": 4,
+      "type": "logs",
+      "title": "Errors, with their stacks",
+      "description": "Every error and fatal line. Open one to see its `error.stack`: the full traceback of what went wrong, where the service wrote it.",
+      "datasource": {
+        "type": "loki",
+        "uid": "pad-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "pad-loki"
+          },
+          "expr": "{source=\"$source\", service=~\"$service\", level=~\"error|fatal\"}",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "showCommonLabels": false,
+        "showLabels": true
+      }
+    },
+    {
+      "id": 5,
+      "type": "logs",
+      "title": "Everything",
+      "description": "Every line from the services and levels chosen above, newest first. The same lines the Gateway's GET /logs serves as a download.",
+      "datasource": {
+        "type": "loki",
+        "uid": "pad-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "pad-loki"
+          },
+          "expr": "{source=\"$source\", service=~\"$service\", level=~\"$level\"}",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "showCommonLabels": false,
+        "showLabels": true
+      }
+    }
+  ]
+}

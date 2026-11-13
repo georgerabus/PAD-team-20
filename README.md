@@ -1134,17 +1134,19 @@ Manual candidate publication does not replace the required release CI run.
 
 ## Monitoring
 
-Prometheus, Loki and Grafana watch the running system. They sit behind a
-Compose profile, so `docker compose up -d` starts the system exactly as it
-always has and nobody pays for four more containers they did not ask for:
+Logs are part of the system: **Loki** stores every container's lines and
+**Promtail** ships them there, and both start with `docker compose up -d`,
+because the Gateway's log download reads from Loki. **Prometheus**, **Tempo**
+and **Grafana** watch the running system. They sit behind a Compose profile,
+so nobody pays for containers they did not ask for:
 
 ```bash
 docker compose --profile monitoring up -d
 ```
 
 Grafana is then at **http://localhost:3300**, opening on *PAD Team 20 —
-System Overview*, with both data sources connected and the dashboard already
-loaded. There is no login: it is a page of counts and container names on a
+System Overview*, with the *PAD Team 20 — Logs* dashboard beside it and all
+three data sources connected. There is no login: it is a page of counts and container names on a
 developer's own machine, and the port is bound to the loopback address.
 
 Stop them again without touching the system:
@@ -1157,8 +1159,12 @@ docker compose --profile monitoring down
 
 ```
 every instance ──GET /status──► Service Discovery ──GET /metrics──► Prometheus ──┐
-                                 (the health check                                 ├──► Grafana
-every container ──stdout──► Promtail ──push──► Loki ─────────────────────────────┘
+                                 (the health check)                              │
+every service ──LogBatch on topic `logs`──► Broker ──► Loki source="broker" ────┼──► Grafana
+                                                             └──► Gateway GET /logs (download)
+every container ──stdout (the same JSON lines)──► Promtail ──► Loki source="stdout" ┤
+every service ──spans (OTLP/HTTP :4318)──► Tempo ──service graph──► Prometheus   │
+                                             └───────────────────────────────────┘
 ```
 
 **Metrics: one scrape target for the whole system.** Service Discovery
@@ -1182,13 +1188,28 @@ the thing that reads the registry. `METRICS_EXTRA_INSTANCES` has Service
 Discovery watch it anyway — probed for its readings alone, never registered
 or removed.
 
-**Logs: every container, discovered through the Docker API.** Promtail lists
-containers rather than being given a list, so a replica started with
-`docker compose up -d --scale player=4` is collected from without any config
-change. It strips the NestJS colour codes and otherwise stores lines as
-written; the eight services use five different log formats between them, and
-LogQL parses at query time, where a wrong guess costs a query rather than a
-day of unsearchable logs.
+**Logs: through the broker, with Promtail as the backup.** Every service sends
+its lines as `LogBatch` events on the broker's `logs` topic, and the broker
+writes them into Loki as `source="broker"` — the system's log, and what the
+Gateway's download reads. Promtail reads every container's standard output
+into Loki as well, as `source="stdout"`: it keeps what cannot go through the
+broker, such as the lines about the broker being down, what a process prints
+as it crashes, and the services that have no sender yet. It lists containers
+through the Docker API rather than being given a list, so a replica started
+with `docker compose up -d --scale player=4` is collected from without any
+config change. Every service writes, or is moving to, one JSON line per event with
+the same fields — `ts, level, service, instance, context, message`, the
+request's `traceId`, and an `error` with its full stack
+([docs/logging-and-tracing.md](docs/logging-and-tracing.md)). Promtail lifts
+`level` into a label and `traceId` into structured metadata, labels each line
+with the service's registered name, and stores everything else as written.
+
+**Traces: one request across every service.** The Gateway gives each request
+a trace id, returns it as `X-Trace-Id`, and passes it on in `traceparent`; the
+broker carries it across HTTP, gRPC and queued events. Each service sends its
+spans to Tempo, so Grafana draws a request as one timeline — Gateway, broker,
+Session, Moderation, down to the database queries — and every log line with a
+trace id links to it, and every span to its log lines.
 
 Logs and metrics share a join key. Every line carries the container id as
 `instance_id`, which is the same value Service Discovery exports on every
@@ -1198,6 +1219,22 @@ instance in a graph and the lines behind it are one filter apart.
 The monitoring containers are deliberately not collected from themselves:
 reading Loki's output and pushing it into Loki, which then logs the write, is
 a loop. `docker compose logs loki` still works.
+
+### Downloading the system's log
+
+```bash
+curl -OJ http://localhost:8080/logs -H "X-Logs-Token: $LOGS_TOKEN"
+# one request, from every service it reached
+curl -s "http://localhost:8080/logs?traceId=<X-Trace-Id>" -H "X-Logs-Token: $LOGS_TOKEN"
+```
+
+`GET /logs` on the Gateway's public port: newline-delimited JSON, oldest
+first, filtered by `since`, `service`, `level`, `traceId` and `limit`. It reads
+the lines that came through the broker (`source=stdout` or `all` for
+Promtail's copy), from Loki, so it includes instances that no longer exist; with Loki down it
+asks every registered instance instead, and `X-Logs-Source` says which. It
+takes an operator token, not a player's: the lines say which applicant is an
+impostor. Details in [docs/logging-and-tracing.md](docs/logging-and-tracing.md).
 
 ### What the dashboard shows
 
@@ -1210,6 +1247,10 @@ a loop. `docker compose logs loki` still works.
 | Traffic | Requests per second by status and the median and 95th percentile latency, read from the Gateway's own log lines — every client request passes through it |
 | The lines themselves | Warnings and errors across every container, and the full collection, live |
 
+*PAD Team 20 — Logs* is the log side on its own: lines and errors per service,
+one request across every service by the trace id pasted into its box, every
+error with its stack, and the full collection filtered by service and level.
+
 Under a load test driving Player past its limit, the dashboard shows both
 replicas at 98% and 100% of their own limits, two instances flagged as
 critically loaded, and the Gateway's status mix shifting to mostly `429`
@@ -1220,10 +1261,12 @@ with `408` and `503` appearing behind it.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GRAFANA_PORT` | `3300` | Where Grafana is published, on the loopback address |
+| `LOGS_TOKEN` | *(empty)* | The operator token for the Gateway's `GET /logs`. Empty, the download refuses every request |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4318` in `.env.example` | Where the services send spans. Empty, trace ids are still made and logged; only the export is off |
 | `METRICS_EXTRA_INSTANCES` | `gateway=http://gateway:8000` | Instances watched for metrics without registering |
 
-The dashboard, both data sources, and the Prometheus, Loki and Promtail
-configuration all live in [monitoring/](monitoring/) and are provisioned on
+Both dashboards, the three data sources, and the Prometheus, Loki, Promtail
+and Tempo configuration all live in [monitoring/](monitoring/) and are provisioned on
 startup. Edits made in the Grafana UI are not written back: change the JSON
 there, or export from Grafana and replace the file.
 
