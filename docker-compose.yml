@@ -335,6 +335,10 @@ services:
       CREDENTIAL_URL: http://gateway:8001/credential
       SERVER_RULES_URL: http://gateway:8001/rules
       SESSION_URL: http://gateway:8001/session
+      # Evaluate and GetCurrentRuleSet go to /pad.rules.v1.Rules through the
+      # broker instead of SERVER_RULES_URL above. Needs a Server Rules image
+      # from 4.0.0-rc.3 on; remove it to fall back to REST.
+      SERVER_RULES_GRPC_ADDRESS: broker:9001
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     deploy:
