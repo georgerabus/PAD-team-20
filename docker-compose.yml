@@ -193,11 +193,21 @@ services:
       SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
       # The services Session calls, through the Gateway's internal listener.
-      # Marked internal in the contract, so reachable there only.
+      # Marked internal in the contract, so reachable there only. Applicant and
+      # Moderation no longer read theirs: the first is asked through the
+      # broker, the second over gRPC through it. Server Rules is the last one
+      # still called this way.
       PLAYER_BASE_URL: http://gateway:8001/player
       APPLICANT_BASE_URL: http://gateway:8001/applicant
       SERVER_RULES_BASE_URL: http://gateway:8001/rules
       MODERATION_BASE_URL: http://gateway:8001/moderation
+      # Which transport that last call uses: `http` for the line above, or
+      # `grpc` for /pad.rules.v1.Rules/CreateRuleSet through the broker. A
+      # setting rather than a release, so Session and Server Rules can be
+      # switched over during a shift run together and switched back. Needs a
+      # Session image from 4.0.0-rc.2 on, and a Server Rules image that serves
+      # the operation; older images ignore it and stay on REST.
+      SERVER_RULES_TRANSPORT: ${SERVER_RULES_TRANSPORT:-http}
       # Every replica registers here on startup as http://$HOSTNAME:3001.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       DB_HOST: session-db
