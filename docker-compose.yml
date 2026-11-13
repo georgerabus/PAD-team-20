@@ -255,7 +255,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.2.0}
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.3.0}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -320,7 +320,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.1.0}
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.3.0}
     depends_on:
       moderation-db:
         condition: service_healthy
