@@ -24,6 +24,7 @@ services:
   gateway:
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE to a published Gateway repository:tag}
     environment:
+      BROKER_SERVICES: "rules,records"
       PLAYER_BASE_URL: http://player:3000
       SESSION_BASE_URL: http://session:3001
       APPLICANT_BASE_URL: http://applicant:80
