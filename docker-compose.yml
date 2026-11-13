@@ -24,7 +24,7 @@ services:
   gateway:
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE to a published Gateway repository:tag}
     environment:
-      BROKER_SERVICES: "rules,records"
+      BROKER_SERVICES: "rules,records,dm,moderation"
       PLAYER_BASE_URL: http://player:3000
       SESSION_BASE_URL: http://session:3001
       APPLICANT_BASE_URL: http://applicant:80
@@ -257,7 +257,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.3.0}
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.4.0}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -329,7 +329,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.3.0}
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.4.0}
     depends_on:
       moderation-db:
         condition: service_healthy
