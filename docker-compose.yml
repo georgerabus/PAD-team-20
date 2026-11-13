@@ -274,11 +274,12 @@ services:
       SESSION_URL: http://gateway:8001/session
       CREDENTIAL_URL: http://gateway:8001/credential
       UNIVERSITY_RECORD_URL: http://gateway:8001/records
-      # Set to broker:9001 to read shared records with University Record's
+      # Shared records are read with University Record's
       # /pad.records.v1.Records/GetRecord through the broker instead of the
-      # REST call above. Needs a University Record image from 4.0.0-rc.1 on;
-      # empty keeps REST.
-      RECORDS_GRPC_ADDRESS: ${DM_RECORDS_GRPC_ADDRESS:-}
+      # REST call above. Needs a University Record image from 4.0.0-rc.1 on.
+      # DM_RECORDS_GRPC_ADDRESS overrides the address; set it empty to fall
+      # back to REST.
+      RECORDS_GRPC_ADDRESS: ${DM_RECORDS_GRPC_ADDRESS-broker:9001}
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     volumes:
