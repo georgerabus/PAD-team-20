@@ -467,9 +467,9 @@ services:
       DB_USERNAME: applicant
       DB_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
       # A new applicant's story is handed over to each target by a gRPC call
-      # through the broker. university-record joins the targets once
-      # University Record takes CreateApplicant over gRPC (#61).
-      HANDOVER_TARGETS: credential
+      # through the broker, named as the target registers with Service
+      # Discovery: records is /pad.records.v1.Records/CreateApplicant (#61).
+      HANDOVER_TARGETS: credential,records
       BROKER_GRPC_ADDRESS: broker:9001
       # Every replica registers here on startup as http://$HOSTNAME:80.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
@@ -508,9 +508,9 @@ services:
       DB_USERNAME: credential
       DB_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
       CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
-      # The same hand-over, to Applicant, when Credential is the one that
-      # starts an applicant.
-      HANDOVER_TARGETS: applicant
+      # The same hand-over, to Applicant and University Record, when
+      # Credential is the one that starts an applicant.
+      HANDOVER_TARGETS: applicant,records
       BROKER_GRPC_ADDRESS: broker:9001
       # Every replica registers here on startup as http://$HOSTNAME:80.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000

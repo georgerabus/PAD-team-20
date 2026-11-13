@@ -298,7 +298,7 @@ for i, (color, dash, sw, caption) in enumerate(legend):
 
 text(952, LY + 30, "What is not drawn", 13, INK, "bold")
 notes = [
-    "Which service calls which. Four of those calls go through the broker now; the table in the README names each one, with its operation and transport.",
+    "Which service calls which. Five of those calls go through the broker now; the table in the README names each one, with its operation and transport.",
     "The nine Compose networks: one per service, shared with its database alone, plus backend, where the Gateway, the broker and Service Discovery meet them.",
     "Replicas past the default two. docker compose up -d --scale player=4 changes nothing here: an instance registers itself, and Promtail finds it.",
     "The Gateway never registers, because it is the thing that reads the registry. Service Discovery probes it anyway, through METRICS_EXTRA_INSTANCES.",
