@@ -853,7 +853,7 @@ Gateway, so nothing watches those three. See [Replicas](#replicas).
 
 ### Through the broker
 
-Four calls no longer go through the Gateway. The caller names an operation and
+Five calls no longer go through the Gateway. The caller names an operation and
 the Message Broker picks an instance of the service that serves it, which is
 why none of these callers carries a circuit breaker of its own.
 
@@ -861,10 +861,11 @@ why none of these callers carries a circuit breaker of its own.
 |---|---|---|---|---|
 | Player | Session | `CreateSession` | gRPC 9001, through the broker | `POST /sessions` on `gateway:8001` |
 | Session | Applicant | `CreateApplicant` | envelope on `POST /messages` | `POST /applicants` on `gateway:8001` |
+| Applicant, Credential | Each other and University Record | `CreateApplicant` | gRPC 9001, through the broker, to every service in `HANDOVER_TARGETS` | `POST /applicants` on `gateway:8001` |
 | Session | Moderation | `ListSessionDecisions` | gRPC 9001, through the broker | `GET /sessions/{id}/decisions` on `gateway:8001` |
 | Session | Player | `SessionCompleted` | event on topic `session.completed` | `POST /internal/events/session-completed` |
 
-The first three are requests with an answer; the fourth is an event, queued by
+The first four are requests with an answer; the last is an event, queued by
 topic, retried, and parked as a dead letter if it never lands. A service
 subscribes by naming its topics on `POST /register`, so the broker learns who
 wants an event from Service Discovery and never from configuration.
@@ -894,7 +895,7 @@ itself over REST.
 | Caller | Callee | Purpose |
 |---|---|---|
 | Session | Server Rules | `POST /rules` — rule set for the shift that is starting |
-| Applicant, Credential, University Record | The other two | `POST /applicants` — hand over the story of an applicant it started |
+| University Record | Applicant, Credential | `POST /applicants` — hand over the story of an applicant it started |
 | Moderation | Applicant | `GET /applicants/{id}` — claim and deception |
 | Moderation | Credential | `POST /applicants/{id}/credentials/validate` — are the documents sound |
 | Moderation | Server Rules | `GET /rules/current` — the session's current rule set |
@@ -913,10 +914,11 @@ all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
 
-**One hand-over is not connected yet.** University Record does not accept an
-applicant's story on `POST /applicants`, so Applicant and Credential are not
-given its address and it does not learn of new applicants. `SessionCompleted`
-is connected: Session sends it to Player when a shift ends, and the shift is
+**Every new applicant reaches University Record.** Applicant and Credential
+hand its story to University Record as well, as a gRPC `CreateApplicant` call
+through the broker, so a junior with enrollment access can read the
+applicant's enrollment as soon as the applicant exists. `SessionCompleted` is
+connected too: Session sends it to Player when a shift ends, and the shift is
 counted without anyone delivering the event by hand. See
 [integration status and verification](docs/gateway-integration.md).
 
