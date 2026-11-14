@@ -194,35 +194,35 @@ contract, which is the one thing Lab 0 exists to force us to get right.
 
 | Service | Language / Framework | Datastore | Talks via | Why |
 |---|---|---|---|---|
-| Player | TypeScript / NestJS | PostgreSQL | REST | Identity, friends and levels; same owner as Session, so same stack |
-| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket | Runs the shift, pushes live state, owns role→access |
-| Applicant | PHP / Laravel | PostgreSQL | REST | Presented claim and deception; can start an applicant |
-| Credential | PHP / Laravel | PostgreSQL | REST | Signs, stores and validates documents; can start an applicant |
-| Server Rules | PHP / Laravel | PostgreSQL | REST | Rule generation, storage and verdict evaluation |
-| University Record | PHP / Laravel | PostgreSQL | REST | Access-controlled ground-truth store; can start an applicant |
-| Moderation | TypeScript / NestJS | PostgreSQL | REST | Decides and scores the admission from Applicant, Credential and Rules |
-| Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST | Real-time per-session chat |
-| Gateway | Python / FastAPI | None | REST, WS URL negotiation | Validates tokens, routes and limits requests |
-| Service Discovery | Python / FastAPI | None | REST | Registry of running instances and their health checks |
+| Player | TypeScript / NestJS | PostgreSQL | REST; gRPC through the broker | Identity, friends and levels; same owner as Session, so same stack |
+| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket; gRPC, messages and events through the broker | Runs the shift, pushes live state, owns role→access |
+| Applicant | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Presented claim and deception; can start an applicant |
+| Credential | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Signs, stores and validates documents; can start an applicant |
+| Server Rules | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Rule generation, storage and verdict evaluation |
+| University Record | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Access-controlled ground-truth store |
+| Moderation | TypeScript / NestJS | PostgreSQL | REST; gRPC through the broker | Decides and scores the admission from Applicant, Credential and Rules |
+| Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST; gRPC through the broker | Real-time per-session chat |
+| Gateway | Python / FastAPI | None | REST, WS URL negotiation; the broker for Rules and Records | Validates tokens, routes and limits requests, serves the system's log |
+| Service Discovery | Python / FastAPI | None | REST | Registry of running instances, their health checks and their topics |
+| Message Broker | Python: standard library, gRPC, OpenTelemetry | SQLite, for queued events | Message envelopes over HTTP, a gRPC proxy, topics | Carries requests, events and log lines between services, and picks the instance |
 
-Two communication patterns are in use, each where it fits:
+Three communication patterns are in use, each where it fits:
 
-- **Synchronous REST** is the default, for any call where the caller needs an
-  answer before it can continue: opening a session, fetching the next applicant,
-  everything Moderation gathers to judge a decision, reporting that outcome to
-  Session so the score updates at once, and the channel checks and evidence
-  lookups made by Discord DMs.
+- **REST from the client through the Gateway.** Every request a player makes
+  enters at the Gateway, which checks the token and routes it to one instance.
+  For Server Rules and University Record it hands the request to the broker
+  instead.
+- **Through the Message Broker, between services.** A service does not call
+  another one directly: it names the operation and the broker finds an
+  instance through Service Discovery, balances by load, and reroutes when an
+  instance fails. Calls that need an answer are requests, mostly gRPC through
+  the broker's proxy on port 9001. News that another service may want is an
+  event on a topic, queued durably and retried, and parked as a dead letter if
+  it never lands. The services' log lines travel the same way, on the `logs`
+  topic. See [Through the broker](#through-the-broker).
 - **WebSockets** carry the two real-time surfaces: the moderator / junior-mod
   chat in Discord DMs, and the live session state (current applicant, score)
   pushed by Session.
-
-There is no message broker. The three paths where one service only has news
-for another are REST calls like the rest: a new applicant's story, handed by whichever
-of Applicant, Credential and University Record created it to the other two; the
-session's current rule set, which Moderation asks Server Rules for; and the
-shift result, which Session sends to Player. None of them needs a queue, and a
-broker would add a container, a worker beside every service that listens, and a
-second way for a request to fail.
 
 ---
 
@@ -847,26 +847,38 @@ so one threshold covers all of them. A critical instance is never removed:
 busy is the opposite of broken. With `ALERT_WEBHOOK_URL` set the alerts are
 also posted to a Discord webhook; unset, they are only logged.
 
-Player, Session, Applicant, Credential, Moderation and Discord DMs register
-today. Server Rules and University Record do not yet, and neither does the
-Gateway, so nothing watches those three. See [Replicas](#replicas).
+Every service registers: the eight domain services, the Message Broker, and
+Service Discovery itself. The Gateway is the one exception, because it is the
+thing that reads the registry; Service Discovery watches its load anyway,
+through `METRICS_EXTRA_INSTANCES`. See [Replicas](#replicas).
 
 ### Through the broker
 
-Five calls no longer go through the Gateway. The caller names an operation and
-the Message Broker picks an instance of the service that serves it, which is
-why none of these callers carries a circuit breaker of its own.
+Calls between services go through the Message Broker. The caller names an
+operation and the broker picks an instance of the service that serves it — by
+load, rerouting to another instance when one fails — which is why none of
+these callers carries a circuit breaker of its own.
 
 | Caller | Callee | Operation | How it travels | What it replaced |
 |---|---|---|---|---|
 | Player | Session | `CreateSession` | gRPC 9001, through the broker | `POST /sessions` on `gateway:8001` |
 | Session | Applicant | `CreateApplicant` | envelope on `POST /messages` | `POST /applicants` on `gateway:8001` |
-| Applicant, Credential | Each other and University Record | `CreateApplicant` | gRPC 9001, through the broker, to every service in `HANDOVER_TARGETS` | `POST /applicants` on `gateway:8001` |
+| Session | Server Rules | `CreateRuleSet` | gRPC 9001, through the broker | `POST /rules` on `gateway:8001` |
 | Session | Moderation | `ListSessionDecisions` | gRPC 9001, through the broker | `GET /sessions/{id}/decisions` on `gateway:8001` |
 | Session | Player | `SessionCompleted` | event on topic `session.completed` | `POST /internal/events/session-completed` |
+| Applicant, Credential | Each other and University Record | `CreateApplicant` | gRPC 9001, through the broker, to every service in `HANDOVER_TARGETS` | `POST /applicants` on `gateway:8001` |
+| Moderation | Applicant | `GetApplicant` | gRPC 9001, through the broker | `GET /applicants/{id}` on `gateway:8001` |
+| Moderation | Credential | `ValidateCredentials` | gRPC 9001, through the broker | `POST /applicants/{id}/credentials/validate` on `gateway:8001` |
+| Moderation | Server Rules | `GetCurrentRuleSet`, `Evaluate` | gRPC 9001, through the broker | `GET /rules/current`, `POST /rules/evaluate` on `gateway:8001` |
+| Discord DMs | Credential | `GetCredential` | gRPC 9001, through the broker | `GET /credentials/{id}` on `gateway:8001` |
+| Discord DMs | University Record | `GetRecord` | gRPC 9001, through the broker | `GET /records/*` on `gateway:8001` |
+| Gateway | Server Rules, University Record | `HttpRequest` | envelope on `POST /messages`, for the client requests it routes there | a direct call to one instance |
+| Player, Session, Gateway, Service Discovery (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
 
-The first four are requests with an answer; the last is an event, queued by
-topic, retried, and parked as a dead letter if it never lands. A service
+Most are requests with an answer; `SessionCompleted` is an event, queued by
+topic, retried, and parked as a dead letter if it never lands. `LogBatch` is an
+event the broker handles itself, without queues, retries or dead letters
+([docs/logging-and-tracing.md](docs/logging-and-tracing.md)). A service
 subscribes by naming its topics on `POST /register`, so the broker learns who
 wants an event from Service Discovery and never from configuration.
 
@@ -876,9 +888,8 @@ is `200` with the reply in the body — including the callee's own status, since
 call went. An event is `202`: the broker has queued it and answers before
 anyone has received it, and there is no reply to correlate.
 
-One more topic is registered and carries no traffic yet: `rules.updated`, with
-Moderation subscribed. The broker lists it at `GET /topics`; nothing has
-published to it.
+The topics registered today, as `GET /topics` lists them: `session.completed`
+(Player), `rules.updated` (Moderation) and `logs` (the broker itself).
 
 An operation arrives two ways — an envelope on `POST /broker/deliver` and a
 gRPC method of the same name — and both are handed to the same handler, which
@@ -887,23 +898,17 @@ answer differently, because only one of them decides anything.
 
 ### Service-to-service calls
 
-Everything else between services is still synchronous REST through the
-Gateway's internal port 8001. There is no fallback between the two: a call
+Two calls are still synchronous REST through the Gateway's internal port
+8001. Session already serves both as broker operations (`ReportOutcome` and
+`CheckChannelAccess`, since Session 4.0.0-rc.3); they move when Moderation and
+Discord DMs switch to them. There is no fallback between the two ways: a call
 that moved to the broker fails as a broker call, and does not quietly retry
 itself over REST.
 
-| Caller | Callee | Purpose |
-|---|---|---|
-| Session | Server Rules | `POST /rules` — rule set for the shift that is starting |
-| University Record | Applicant, Credential | `POST /applicants` — hand over the story of an applicant it started |
-| Moderation | Applicant | `GET /applicants/{id}` — claim and deception |
-| Moderation | Credential | `POST /applicants/{id}/credentials/validate` — are the documents sound |
-| Moderation | Server Rules | `GET /rules/current` — the session's current rule set |
-| Moderation | Server Rules | `POST /rules/evaluate` — the correct verdict |
-| Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision |
-| Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access |
-| Discord DMs | Credential | `GET /credentials/{id}` — share a document into a channel |
-| Discord DMs | University Record | `GET /records/*` — share a record into a channel |
+| Caller | Callee | Purpose | Moves to |
+|---|---|---|---|
+| Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision | `ReportOutcome` |
+| Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access | `CheckChannelAccess` |
 
 ## Running the System
 
@@ -1022,12 +1027,9 @@ and set `SESSION_PUBLIC_WS_BASE_URL` (or `DM_PUBLIC_WS_BASE_URL`) to a port
 that is listening. Pinning a replica count of 1 with a single-port range avoids
 the question entirely.
 
-Gateway still reaches each service by its Compose name, which Docker resolves to
-every replica's address. Reading the instances from Service Discovery and
-spreading requests round-robin is the next step, in the Gateway.
-
-Server Rules and University Record run one replica each until their images
-register with Service Discovery.
+The Gateway reads each service's instances from Service Discovery and spreads
+its requests across them. What goes through the Message Broker is placed by
+the broker instead, by load, and rerouted when an instance fails.
 
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
@@ -1055,8 +1057,7 @@ Run it from the host instead and the client story still runs against
 `http://127.0.0.1:8080`, but those five requests cannot reach the internal
 listener and fail, along with the assertions that depend on them.
 
-Its **The Message Broker** folder watches the four calls that left the
-Gateway: who is registered and for which topics, what the broker is carrying,
+Its **The Message Broker** folder checks the broker itself: who is registered and for which topics, what the broker is carrying,
 whether anything has been given up on as a dead letter, and both envelope
 kinds sent by hand — a `CreateApplicant` request that comes back with an
 applicant id, and a `SessionCompleted` event replayed onto
@@ -1126,11 +1127,9 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t <username>/<service-name>:<version> --push .
 ```
 
-For Lab 3 integration, SD, Applicant and Credential use candidate tags built
-from their tested `dev` commits. Their final release PRs stay as drafts until
-the lab is ready to present. The exact commits, image digests and current
-integration result are in [the candidate report](docs/lab3-candidate-integration.md).
-Manual candidate publication does not replace the required release CI run.
+Each image is published by its repository's workflow, under the exact version
+in its project file, and `.env.example` pins exact tags, never `latest`. Lab 4's
+final releases are `4.0.0`.
 
 ## Monitoring
 

@@ -142,7 +142,7 @@ services:
     restart: unless-stopped
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0-rc.3}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0}
     depends_on:
       player-db:
         condition: service_healthy
@@ -194,7 +194,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.0-rc.3}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.0}
     depends_on:
       session-db:
         condition: service_healthy
