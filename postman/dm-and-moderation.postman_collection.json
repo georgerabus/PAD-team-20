@@ -1032,7 +1032,9 @@
                   "pm.test('newline-delimited JSON', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/x-ndjson'));",
                   "const lines = pm.response.text().split('\\n').filter(Boolean).map((l) => JSON.parse(l));",
                   "pm.test('at most the limit', () => pm.expect(lines.length).to.be.within(1, 20));",
-                  "pm.test('every line has the shared fields', () => lines.forEach((l) => pm.expect(l).to.have.all.keys('ts', 'level', 'context', 'message', 'instance')));",
+                  "// The shared fields; a line may add others: traceId and spanId inside a request, error with a stack.",
+                  "pm.test('every line has the shared fields', () => lines.forEach((l) => pm.expect(l).to.include.all.keys('ts', 'level', 'service', 'instance', 'context', 'message')));",
+                  "pm.test('written by dm', () => lines.forEach((l) => pm.expect(l.service).to.eql('dm')));",
                   "pm.test('oldest first', () => pm.expect(lines.map((l) => l.ts)).to.eql(lines.map((l) => l.ts).sort()));"
                 ]
               }
