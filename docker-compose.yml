@@ -150,7 +150,6 @@ services:
       PORT: 3000
       JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
-      SESSION_BASE_URL: http://gateway:8001/session
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       # Where spans go: Tempo, started with the monitoring profile. Empty, trace
@@ -194,7 +193,7 @@ services:
     restart: unless-stopped
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.0}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.1}
     depends_on:
       session-db:
         condition: service_healthy
@@ -207,23 +206,10 @@ services:
       WS_PORT: 3011
       SESSION_JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
       SESSION_JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
-      # The services Session calls, through the Gateway's internal listener.
-      # Marked internal in the contract, so reachable there only. None of the
-      # four is read any more: Applicant is asked through the broker,
-      # Moderation and Server Rules over gRPC through it. They stay until the
-      # routes are removed from the Gateway, so that setting the transport
-      # below back to `http` is enough to fall back.
-      PLAYER_BASE_URL: http://gateway:8001/player
-      APPLICANT_BASE_URL: http://gateway:8001/applicant
-      SERVER_RULES_BASE_URL: http://gateway:8001/rules
-      MODERATION_BASE_URL: http://gateway:8001/moderation
-      # How Session calls Server Rules: `grpc` for
-      # /pad.rules.v1.Rules/CreateRuleSet through the broker, or `http` for
-      # SERVER_RULES_BASE_URL above. Verified over gRPC on 2026-11-13 — a
-      # shift opened on rule set 16174, well inside the 4s deadline — so gRPC
-      # is the default now, and `http` is what to set if the broker or Server
-      # Rules has to be taken out of the path.
-      SERVER_RULES_TRANSPORT: ${SERVER_RULES_TRANSPORT:-grpc}
+      # No setting names another service: from 4.0.1 on, everything Session
+      # calls goes through the Message Broker (Applicant and Player by message,
+      # Server Rules and Moderation over gRPC), at its default address, and
+      # nothing goes through the Gateway's internal listener.
       # Every replica registers here on startup as http://$HOSTNAME:3001.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       # Where spans go: Tempo, started with the monitoring profile. Empty, trace
