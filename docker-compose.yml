@@ -442,6 +442,9 @@ services:
     volumes:
       - university-record-db-data:/var/lib/postgresql/data
       - ./db/university-record:/docker-entrypoint-initdb.d:ro
+    # Prepared transactions for the two-phase commit (README, "Replicated
+    # databases"); postgres:17 allows none by default.
+    command: ["postgres", "-c", "max_prepared_transactions=64"]
     networks: [university-record]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U university_record -d university_record"]
@@ -491,6 +494,9 @@ services:
     volumes:
       - applicant-db-data:/var/lib/postgresql/data
       - ./db/applicant:/docker-entrypoint-initdb.d:ro
+    # Prepared transactions for the two-phase commit (README, "Replicated
+    # databases"); postgres:17 allows none by default.
+    command: ["postgres", "-c", "max_prepared_transactions=64"]
     networks: [applicant]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U applicant -d applicant"]
@@ -532,6 +538,9 @@ services:
     volumes:
       - credential-db-data:/var/lib/postgresql/data
       - ./db/credential:/docker-entrypoint-initdb.d:ro
+    # Prepared transactions for the two-phase commit (README, "Replicated
+    # databases"); postgres:17 allows none by default.
+    command: ["postgres", "-c", "max_prepared_transactions=64"]
     networks: [credential]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U credential -d credential"]
