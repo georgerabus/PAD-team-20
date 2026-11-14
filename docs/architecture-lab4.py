@@ -118,14 +118,14 @@ text(170, 236, "Gateway", 15, PLAT_T, "bold", "middle")
 text(170, 255, "Python / FastAPI · one instance", 10.5, MUTED, "normal", "middle")
 text(170, 275, "published 8080 → public 8000", 11, INK, "normal", "middle", MONO)
 text(170, 292, "internal 8001 · no database", 11, INK, "normal", "middle", MONO)
-text(170, 307, "validates tokens, forwards identity", 10.5, MUTED, "normal", "middle")
+text(170, 307, "validates tokens · GET /logs, the system's log", 10.5, MUTED, "normal", "middle")
 
 rect(40, 400, 260, 130, PLAT_F, PLAT_S)
 text(170, 426, "Service Discovery", 15, PLAT_T, "bold", "middle")
 text(170, 445, "Python / FastAPI · registry in memory", 10.5, MUTED, "normal", "middle")
 text(170, 467, "POST /register", 11, INK, "normal", "middle", MONO)
 text(170, 484, "GET /status every 5s", 11, INK, "normal", "middle", MONO)
-text(170, 501, "GET /metrics · GET /logs/all", 11, INK, "normal", "middle", MONO)
+text(170, 501, "GET /services · GET /metrics", 11, INK, "normal", "middle", MONO)
 text(170, 519, "removes what stops answering", 10.5, MUTED, "normal", "middle")
 
 # --------------------------------------------------------- services panel ---
@@ -186,9 +186,9 @@ text(BX + BW - 100, BY + 116, "queues survive a restart", 10, FAINT, "normal", "
 # ------------------------------------------------------------- monitoring ---
 MX, MY, MW, MH = 1310, 100, 530, 612
 rect(MX, MY, MW, MH, MON_F, MON_S, r=12, dash="6 4")
-text(MX + 24, MY + 28, "Monitoring", 14, MON_T, "bold")
-text(MX + 132, MY + 28, "docker compose --profile monitoring up -d", 10.5, MUTED,
-     "normal", "start", MONO)
+text(MX + 24, MY + 26, "Logs, traces, monitoring", 14, MON_T, "bold")
+text(MX + 24, MY + 44, "Loki and Promtail always run; the rest with --profile monitoring", 10, MUTED,
+     "normal", "start")
 
 PT = (MX + 30, MY + 56, 220, 78)
 rect(*PT, "#FFFFFF", MON_S, r=8)
@@ -209,17 +209,27 @@ text(MX + 140, MY + 306, "loki-data", 10, FAINT, "normal", "middle", MONO)
 rect(MX + 110, MY + 390, 270, 92, "#FFFFFF", MON_S, r=8)
 text(MX + 245, MY + 422, "Grafana", 15, MON_T, "bold", "middle")
 text(MX + 245, MY + 442, "localhost:3300", 11, INK, "normal", "middle", MONO)
-text(MX + 245, MY + 460, "PAD Team 20 — System Overview", 10, MUTED, "normal", "middle")
+text(MX + 245, MY + 460, "System Overview · Logs dashboards", 10, MUTED, "normal", "middle")
+
+TE = (MX + 280, MY + 150, 220, 68)
+rect(*TE, "#FFFFFF", MON_S, r=8)
+text(MX + 390, MY + 176, "Tempo", 13, MON_T, "bold", "middle")
+text(MX + 390, MY + 194, "one request as a timeline", 10, MUTED, "normal", "middle")
+text(MX + 390, MY + 208, "OTLP/HTTP :4318", 10, MUTED, "normal", "middle", MONO)
 
 text(MX + 24, MY + MH - 46, "Logs and metrics join on instance_id, the container id:", 10.5, MUTED)
-text(MX + 24, MY + MH - 30, "it is on every log line and on every reading.", 10.5, MUTED)
+text(MX + 24, MY + MH - 30, "it is on every log line and on every reading. traceId joins", 10.5, MUTED)
+text(MX + 24, MY + MH - 14, "a line to its trace, and the trace to every line it wrote.", 10.5, MUTED)
 
 arrow(f"M {MX+140},{MY+134} V {MY+204}", MUTED, (MX + 140, MY + 210), 90, 1.4)
 label(MX + 176, MY + 174, ["push"], 10, MUTED, "middle")
 arrow(f"M {MX+140},{MY+286} C {MX+140},{MY+350} {MX+180},{MY+356} {MX+205},{MY+384}",
       MUTED, (MX + 210, MY + 390), 55, 1.4)
-arrow(f"M {MX+390},{MY+134} C {MX+390},{MY+300} {MX+330},{MY+330} {MX+295},{MY+384}",
-      MUTED, (MX + 291, MY + 390), 120, 1.4)
+arrow(f"M {MX+300},{MY+134} C {MX+300},{MY+150} {MX+250},{MY+150} {MX+250},{MY+190} "
+      f"V {MY+330} C {MX+250},{MY+360} {MX+240},{MY+370} {MX+235},{MY+384}",
+      MUTED, (MX + 233, MY + 390), 105, 1.4)
+arrow(f"M {MX+390},{MY+218} C {MX+390},{MY+320} {MX+330},{MY+340} {MX+300},{MY+384}",
+      MUTED, (MX + 296, MY + 390), 125, 1.4)
 
 # ------------------------------------------------------------------ edges ---
 # Client -> Gateway
@@ -267,8 +277,23 @@ label(276, 602, ["GET /services", "GET /topics"], 10.5, C_DISC, "middle")
 arrow(f"M {PX+PW},{PY+76} H {MX+24}", C_TEL, (MX + 30, PY + 76), 0, 1.6, "2 4", 9)
 label(MX - 24, PY + 64, ["stdout of every container"], 10.5, C_TEL, "middle")
 
+# every service -> Tempo: its spans
+arrow(f"M {PX+PW},{MY+184} H {MX+274}", C_TEL, (MX + 280, MY + 184), 0, 1.6, "2 4", 9)
+label(MX - 24, MY + 172, ["spans"], 10.5, C_TEL, "middle")
+
+# Loki -> the Gateway: GET /logs reads the system's log from Loki. Round the
+# bottom of the drawing, clear of the services panel.
+arrow(f"M {MX+60},{MY+230} H {MX-10} V 740 H 24 V 262 H 34", C_TEL, (40, 262), 0, 1.6, "2 4", 9)
+label(700, 732, ["GET /logs on the Gateway reads from Loki what came through the broker"], 11, C_TEL, "middle")
+
+# The broker -> Loki: every service's lines, sent as LogBatch events on the
+# `logs` topic, written into Loki as source="broker".
+arrow(f"M {BX+BW},{BY+40} H {MX-22} V {MY+270} H {MX+54}", C_TEL, (MX + 60, MY + 270), 0, 1.6, "2 4", 9)
+label(MX + 22, MY + 262, ["logs topic"], 10.5, C_TEL, "middle")
+
 # Service Discovery -> Prometheus
-arrow(f"M 118,530 V 756 H 1720 V {MY+140}", C_TEL, (1720, MY + 134), 270, 1.6, "2 4", 9)
+# Up the panel's right margin and into Prometheus's side, clear of Tempo.
+arrow(f"M 118,530 V 756 H {MX+520} V {MY+95} H {MX+506}", C_TEL, (MX + 500, MY + 95), 180, 1.6, "2 4", 9)
 label(770, 756, ["GET /metrics  —  Service Discovery has already asked every instance for "
                  "GET /status, so one scrape covers the whole system"], 11, C_TEL, "middle")
 
@@ -288,7 +313,7 @@ legend = [
     (C_WS, "7 5", 1.8, "WebSocket, straight to the service. The Gateway negotiates the URL, then stands aside."),
     (C_BROKER, None, 3.0, "Through the broker. The caller names an operation; the broker chooses the instance."),
     (C_DISC, "5 4", 1.6, "The registry. Who is running, who is still answering, which topics each one takes."),
-    (C_TEL, "2 4", 1.6, "Telemetry. Only the monitoring profile reads these; the system runs without them."),
+    (C_TEL, "2 4", 1.6, "Telemetry: logs, spans and metrics. Loki and Promtail always run; the rest only with the monitoring profile."),
 ]
 for i, (color, dash, sw, caption) in enumerate(legend):
     ly = LY + 58 + i * 18

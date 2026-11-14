@@ -45,6 +45,9 @@ limits_config:
   # Kept for two days. This is a lab system that is started, demonstrated and
   # stopped, so anything older is only taking up disk.
   retention_period: 48h
+  # Loki 3 would otherwise add a `service_name` label of its own, a copy of
+  # `service`. The labels stay the ones agreed: service, level, source.
+  discover_service_name: []
 
 compactor:
   working_directory: /loki/compactor
