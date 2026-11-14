@@ -1,0 +1,16 @@
+# Dashboards are loaded from the repository, so the stack comes up with them
+# already there. Edits made in the browser are not written back to these
+# files: change the JSON here, or export from Grafana and replace it.
+apiVersion: 1
+
+providers:
+  - name: PAD Team 20
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

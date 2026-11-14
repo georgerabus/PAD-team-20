@@ -8,7 +8,10 @@ A game set in a university Discord server where a moderation team decides who ge
 - [Architecture Diagram](#architecture-diagram)
 - [Technologies and Communication Patterns](#technologies-and-communication-patterns)
 - [Communication Contract](#communication-contract)
+  - [Through the broker](#through-the-broker)
+  - [Service-to-service calls](#service-to-service-calls)
 - [Running the System](#running-the-system)
+- [Monitoring](#monitoring)
 - [GitHub Workflow](#github-workflow)
 - [Project Board](#project-board)
 
@@ -71,7 +74,24 @@ answering. It owns no database: the registry is held in memory.
 
 ## Architecture Diagram
 
-Lab 2 deployment topology (configured by common Compose):
+Lab 4 deployment topology. Every box is a container in `docker-compose.yml`:
+
+![Lab 4 deployment topology](docs/images/architecture-lab4.png)
+
+Five kinds of line, because the system now has five ways for one container to
+reach another: REST through the Gateway, a WebSocket straight to the service,
+a call through the Message Broker, registry traffic, and telemetry. The
+drawing is generated — `python3 docs/architecture-lab4.py` rebuilds the PNG
+from the layout in that file, so the diagram cannot quietly fall behind the
+Compose file it describes.
+
+What the picture does not say, and the sections below do: which service calls
+which ([Service-to-service calls](#service-to-service-calls)), what moved onto
+the broker ([Through the broker](#through-the-broker)), and what the
+monitoring containers collect ([Monitoring](#monitoring)).
+
+Lab 2 deployment topology, kept because it is the shape the Gateway was built
+for and the broker did not change it:
 
 ```mermaid
 flowchart LR
@@ -174,35 +194,35 @@ contract, which is the one thing Lab 0 exists to force us to get right.
 
 | Service | Language / Framework | Datastore | Talks via | Why |
 |---|---|---|---|---|
-| Player | TypeScript / NestJS | PostgreSQL | REST | Identity, friends and levels; same owner as Session, so same stack |
-| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket | Runs the shift, pushes live state, owns role→access |
-| Applicant | PHP / Laravel | PostgreSQL | REST | Presented claim and deception; can start an applicant |
-| Credential | PHP / Laravel | PostgreSQL | REST | Signs, stores and validates documents; can start an applicant |
-| Server Rules | PHP / Laravel | PostgreSQL | REST | Rule generation, storage and verdict evaluation |
-| University Record | PHP / Laravel | PostgreSQL | REST | Access-controlled ground-truth store; can start an applicant |
-| Moderation | TypeScript / NestJS | PostgreSQL | REST | Decides and scores the admission from Applicant, Credential and Rules |
-| Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST | Real-time per-session chat |
-| Gateway | Python / FastAPI | None | REST, WS URL negotiation | Validates tokens, routes and limits requests |
-| Service Discovery | Python / FastAPI | None | REST | Registry of running instances and their health checks |
+| Player | TypeScript / NestJS | PostgreSQL | REST; gRPC through the broker | Identity, friends and levels; same owner as Session, so same stack |
+| Session | TypeScript / NestJS | PostgreSQL | REST, WebSocket; gRPC, messages and events through the broker | Runs the shift, pushes live state, owns role→access |
+| Applicant | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Presented claim and deception; can start an applicant |
+| Credential | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Signs, stores and validates documents; can start an applicant |
+| Server Rules | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Rule generation, storage and verdict evaluation |
+| University Record | PHP / Laravel | PostgreSQL | REST; gRPC through the broker | Access-controlled ground-truth store |
+| Moderation | TypeScript / NestJS | PostgreSQL | REST; gRPC through the broker | Decides and scores the admission from Applicant, Credential and Rules |
+| Discord DMs | TypeScript / NestJS | PostgreSQL | WebSocket, REST; gRPC through the broker | Real-time per-session chat |
+| Gateway | Python / FastAPI | None | REST, WS URL negotiation; the broker for Rules and Records | Validates tokens, routes and limits requests, serves the system's log |
+| Service Discovery | Python / FastAPI | None | REST | Registry of running instances, their health checks and their topics |
+| Message Broker | Python: standard library, gRPC, OpenTelemetry | SQLite, for queued events | Message envelopes over HTTP, a gRPC proxy, topics | Carries requests, events and log lines between services, and picks the instance |
 
-Two communication patterns are in use, each where it fits:
+Three communication patterns are in use, each where it fits:
 
-- **Synchronous REST** is the default, for any call where the caller needs an
-  answer before it can continue: opening a session, fetching the next applicant,
-  everything Moderation gathers to judge a decision, reporting that outcome to
-  Session so the score updates at once, and the channel checks and evidence
-  lookups made by Discord DMs.
+- **REST from the client through the Gateway.** Every request a player makes
+  enters at the Gateway, which checks the token and routes it to one instance.
+  For Server Rules and University Record it hands the request to the broker
+  instead.
+- **Through the Message Broker, between services.** A service does not call
+  another one directly: it names the operation and the broker finds an
+  instance through Service Discovery, balances by load, and reroutes when an
+  instance fails. Calls that need an answer are requests, mostly gRPC through
+  the broker's proxy on port 9001. News that another service may want is an
+  event on a topic, queued durably and retried, and parked as a dead letter if
+  it never lands. The services' log lines travel the same way, on the `logs`
+  topic. See [Through the broker](#through-the-broker).
 - **WebSockets** carry the two real-time surfaces: the moderator / junior-mod
   chat in Discord DMs, and the live session state (current applicant, score)
   pushed by Session.
-
-There is no message broker. The three paths where one service only has news
-for another are REST calls like the rest: a new applicant's story, handed by whichever
-of Applicant, Credential and University Record created it to the other two; the
-session's current rule set, which Moderation asks Server Rules for; and the
-shift result, which Session sends to Player. None of them needs a queue, and a
-broker would add a container, a worker beside every service that listens, and a
-second way for a request to fail.
 
 ---
 
@@ -827,45 +847,83 @@ so one threshold covers all of them. A critical instance is never removed:
 busy is the opposite of broken. With `ALERT_WEBHOOK_URL` set the alerts are
 also posted to a Discord webhook; unset, they are only logged.
 
-Player, Session, Applicant, Credential, Moderation and Discord DMs register
-today. Server Rules and University Record do not yet, and neither does the
-Gateway, so nothing watches those three. See [Replicas](#replicas).
+Every service registers: the eight domain services, the Message Broker, and
+Service Discovery itself. The Gateway is the one exception, because it is the
+thing that reads the registry; Service Discovery watches its load anyway,
+through `METRICS_EXTRA_INSTANCES`. See [Replicas](#replicas).
+
+### Through the broker
+
+Calls between services go through the Message Broker. The caller names an
+operation and the broker picks an instance of the service that serves it — by
+load, rerouting to another instance when one fails — which is why none of
+these callers carries a circuit breaker of its own.
+
+| Caller | Callee | Operation | How it travels | What it replaced |
+|---|---|---|---|---|
+| Player | Session | `CreateSession` | gRPC 9001, through the broker | `POST /sessions` on `gateway:8001` |
+| Session | Applicant | `CreateApplicant` | envelope on `POST /messages` | `POST /applicants` on `gateway:8001` |
+| Session | Server Rules | `CreateRuleSet` | gRPC 9001, through the broker | `POST /rules` on `gateway:8001` |
+| Session | Moderation | `ListSessionDecisions` | gRPC 9001, through the broker | `GET /sessions/{id}/decisions` on `gateway:8001` |
+| Session | Player | `SessionCompleted` | event on topic `session.completed` | `POST /internal/events/session-completed` |
+| Applicant, Credential | Each other and University Record | `CreateApplicant` | gRPC 9001, through the broker, to every service in `HANDOVER_TARGETS` | `POST /applicants` on `gateway:8001` |
+| Moderation | Applicant | `GetApplicant` | gRPC 9001, through the broker | `GET /applicants/{id}` on `gateway:8001` |
+| Moderation | Credential | `ValidateCredentials` | gRPC 9001, through the broker | `POST /applicants/{id}/credentials/validate` on `gateway:8001` |
+| Moderation | Server Rules | `GetCurrentRuleSet`, `Evaluate` | gRPC 9001, through the broker | `GET /rules/current`, `POST /rules/evaluate` on `gateway:8001` |
+| Discord DMs | Credential | `GetCredential` | gRPC 9001, through the broker | `GET /credentials/{id}` on `gateway:8001` |
+| Discord DMs | University Record | `GetRecord` | gRPC 9001, through the broker | `GET /records/*` on `gateway:8001` |
+| Gateway | Server Rules, University Record | `HttpRequest` | envelope on `POST /messages`, for the client requests it routes there | a direct call to one instance |
+| Player, Session, Gateway, Service Discovery (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
+
+Most are requests with an answer; `SessionCompleted` is an event, queued by
+topic, retried, and parked as a dead letter if it never lands. `LogBatch` is an
+event the broker handles itself, without queues, retries or dead letters
+([docs/logging-and-tracing.md](docs/logging-and-tracing.md)). A service
+subscribes by naming its topics on `POST /register`, so the broker learns who
+wants an event from Service Discovery and never from configuration.
+
+The two kinds answer differently, and the difference is the point. A request
+is `200` with the reply in the body — including the callee's own status, since
+`200` only means the broker carried the message and says nothing about how the
+call went. An event is `202`: the broker has queued it and answers before
+anyone has received it, and there is no reply to correlate.
+
+The topics registered today, as `GET /topics` lists them: `session.completed`
+(Player), `rules.updated` (Moderation) and `logs` (the broker itself).
+
+An operation arrives two ways — an envelope on `POST /broker/deliver` and a
+gRPC method of the same name — and both are handed to the same handler, which
+is also the one behind the REST endpoint it replaced. The three ways in cannot
+answer differently, because only one of them decides anything.
 
 ### Service-to-service calls
 
-Every call between services is synchronous REST through the Gateway's internal
-port. There is no broker.
+Two calls are still synchronous REST through the Gateway's internal port
+8001. Session already serves both as broker operations (`ReportOutcome` and
+`CheckChannelAccess`, since Session 4.0.0-rc.3); they move when Moderation and
+Discord DMs switch to them. There is no fallback between the two ways: a call
+that moved to the broker fails as a broker call, and does not quietly retry
+itself over REST.
 
-| Caller | Callee | Purpose |
-|---|---|---|
-| Player | Session | `POST /sessions` — open a session for a team, with its roster |
-| Session | Server Rules | `POST /rules` — rule set for the shift that is starting |
-| Session | Applicant | `POST /applicants` — request the next applicant |
-| Session | Moderation | `GET /sessions/{id}/decisions` — decision log for the final result |
-| Session | Player | `POST /internal/events/session-completed` — the shift result |
-| Applicant, Credential, University Record | The other two | `POST /applicants` — hand over the story of an applicant it started |
-| Moderation | Applicant | `GET /applicants/{id}` — claim and deception |
-| Moderation | Credential | `POST /applicants/{id}/credentials/validate` — are the documents sound |
-| Moderation | Server Rules | `GET /rules/current` — the session's current rule set |
-| Moderation | Server Rules | `POST /rules/evaluate` — the correct verdict |
-| Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision |
-| Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access |
-| Discord DMs | Credential | `GET /credentials/{id}` — share a document into a channel |
-| Discord DMs | University Record | `GET /records/*` — share a record into a channel |
+| Caller | Callee | Purpose | Moves to |
+|---|---|---|---|
+| Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision | `ReportOutcome` |
+| Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access | `CheckChannelAccess` |
 
 ## Running the System
 
-The common `docker-compose.yml` starts Gateway, Service Discovery, the eight
-domain services, their separate PostgreSQL databases and a WS-only edge.
+The common `docker-compose.yml` starts Gateway, Service Discovery, the Message
+Broker, the eight domain services, their separate PostgreSQL databases and a WS-only edge.
 Service Discovery publishes no port. Domain REST ports and
 all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
 
-**One hand-over is not connected yet.** University Record does not accept an
-applicant's story on `POST /applicants`, so Applicant and Credential are not
-given its address and it does not learn of new applicants. `SessionCompleted`
-is connected: Session sends it to Player when a shift ends, and the shift is
+**Every new applicant reaches University Record.** Applicant and Credential
+hand its story to University Record as well, as a gRPC `CreateApplicant` call
+through the broker, so a junior with enrollment access can read the
+applicant's enrollment as soon as the applicant exists. `SessionCompleted` is
+connected too: Session sends it to Player when a shift ends, and the shift is
 counted without anyone delivering the event by hand. See
 [integration status and verification](docs/gateway-integration.md).
 
@@ -948,21 +1006,38 @@ shift, whichever replica holds its socket.
 
 Each publishes one WebSocket port per replica, from `DM_WS_PORT` to
 `DM_WS_PORT_LAST` and from `SESSION_WS_PORT` to `SESSION_WS_PORT_LAST`. Each
-range must hold at least that service's replica count. The first replica takes
-the first port, which is the address `/ws/negotiate` hands out; because the
-events reach every replica, that one address serves all of them.
+range must hold at least that service's replica count. Because the events reach
+every replica, one address serves all of them, and that is the one
+`/ws/negotiate` hands out: `SESSION_PUBLIC_WS_BASE_URL`, which defaults to the
+first port of the range.
 
-Gateway still reaches each service by its Compose name, which Docker resolves to
-every replica's address. Reading the instances from Service Discovery and
-spreading requests round-robin is the next step, in the Gateway.
+**Docker does not promise to use the first port of a range, and often does
+not.** It assigns each replica whichever port in the range is free when that
+container starts, so a replica that was recreated, or started after another
+took the port, lands further along. Two Session replicas on `3011-3013`
+currently hold `3012` and `3013`, and nothing listens on `3011` — so the URL
+`/ws/negotiate` hands out refuses the connection, while the sockets themselves
+are fine. Check what is actually bound before demonstrating a WebSocket:
 
-Server Rules and University Record run one replica each until their images
-register with Service Discovery.
+```bash
+docker compose ps --format "{{.Service}} {{.Publishers}}" | grep -E "session|dm-service"
+```
+
+and set `SESSION_PUBLIC_WS_BASE_URL` (or `DM_PUBLIC_WS_BASE_URL`) to a port
+that is listening. Pinning a replica count of 1 with a single-port range avoids
+the question entirely.
+
+The Gateway reads each service's instances from Service Discovery and spreads
+its requests across them. What goes through the Message Broker is placed by
+the broker instead, by load, and rerouted when an instance fails.
 
 PostgreSQL initializes the Node services' schemas from `db/<service>` on an
 empty volume. Applicant/Credential use Laravel migrations at startup and need
 no APP_KEY because they are JSON APIs with no cookie/session encryption.
 Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named volumes retain data; `docker compose down -v` deletes this deployment's data.
+
+The Message Broker keeps the events it has not delivered yet in the `broker-data`
+volume, so they are delivered after the broker restarts.
 
 `postman/player-and-session.postman_collection.json` runs the Player and
 Session story through the Gateway: the client sends `Authorization`, never the
@@ -982,6 +1057,15 @@ Run it from the host instead and the client story still runs against
 `http://127.0.0.1:8080`, but those five requests cannot reach the internal
 listener and fail, along with the assertions that depend on them.
 
+Its **The Message Broker** folder checks the broker itself: who is registered and for which topics, what the broker is carrying,
+whether anything has been given up on as a dead letter, and both envelope
+kinds sent by hand — a `CreateApplicant` request that comes back with an
+applicant id, and a `SessionCompleted` event replayed onto
+`session.completed`, after which the shift is still counted once. The broker
+and Service Discovery publish no port either, so that folder has the same
+condition as the five internal requests: inside the network it passes, from
+the host it cannot connect.
+
 `postman/applicant-and-credential.postman_collection.json` follows the same
 rules and runs the same way, under its own file name. It opens a real session
 through Player and Session, then covers every Applicant and Credential
@@ -990,14 +1074,18 @@ session token, and a folder of its own checking that identity headers the
 caller sets and internal paths are refused on the published port.
 
 `postman/dm-and-moderation.postman_collection.json` runs one shift through
-Discord DMs and Moderation with real tokens: channels, messages and shared
-evidence in DM, the moderator's decision in Moderation, and Session counting
-it. It also covers the WebSockets: it negotiates DM's and Session's sockets
-through the Gateway's `POST /ws/negotiate`, and checks that both ports speak only
-WebSocket (`426` to plain HTTP) and that DM checks the token on the handshake
-(`401`, `403`). Newman cannot hold a socket open, so the collection saves the
-negotiated `dmSocketUrl` and `sessionSocketUrl` for a live demo in Postman's
-WebSocket tab.
+Discord DMs and Moderation with real tokens, checks DM's and Session's
+WebSocket ports (`426`, `401`, `403`), and saves `dmSocketUrl` and
+`sessionSocketUrl` for a live demo in Postman. Its last folder covers Lab 4:
+both services' topics and `GET /logs`, the same calls sent to the broker as
+`HttpRequest` envelopes, and a `RulesUpdated` event sent twice. It runs inside
+the Docker network:
+
+```bash
+docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \
+  postman/newman run dm-and-moderation.postman_collection.json \
+  --env-var gatewayBaseUrl=http://gateway:8000
+```
 
 The remaining collections were written for earlier direct-service setups and have
 not all been migrated. Run `tests/verify_compose_gateway.py` for the full
@@ -1025,6 +1113,8 @@ runtime registers and stopped ones drop out.
 | Applicant | [`georgerabus/pad-applicant-service`](https://hub.docker.com/r/georgerabus/pad-applicant-service) |
 | Credential | [`georgerabus/pad-credential-service`](https://hub.docker.com/r/georgerabus/pad-credential-service) |
 | Gateway | [`augustinploteanu/pad-gateway-service`](https://hub.docker.com/r/augustinploteanu/pad-gateway-service) |
+| Service Discovery | [`georgerabus/pad-service-discovery`](https://hub.docker.com/r/georgerabus/pad-service-discovery) |
+| Message Broker | [`georgerabus/pad-message-broker`](https://hub.docker.com/r/georgerabus/pad-message-broker) |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact
@@ -1037,11 +1127,147 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t <username>/<service-name>:<version> --push .
 ```
 
-For Lab 3 integration, SD, Applicant and Credential use candidate tags built
-from their tested `dev` commits. Their final release PRs stay as drafts until
-the lab is ready to present. The exact commits, image digests and current
-integration result are in [the candidate report](docs/lab3-candidate-integration.md).
-Manual candidate publication does not replace the required release CI run.
+Each image is published by its repository's workflow, under the exact version
+in its project file, and `.env.example` pins exact tags, never `latest`. Lab 4's
+final releases are `4.0.0`.
+
+## Monitoring
+
+Logs are part of the system: **Loki** stores every container's lines and
+**Promtail** ships them there, and both start with `docker compose up -d`,
+because the Gateway's log download reads from Loki. **Prometheus**, **Tempo**
+and **Grafana** watch the running system. They sit behind a Compose profile,
+so nobody pays for containers they did not ask for:
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+Grafana is then at **http://localhost:3300**, opening on *PAD Team 20 —
+System Overview*, with the *PAD Team 20 — Logs* dashboard beside it and all
+three data sources connected. There is no login: it is a page of counts and container names on a
+developer's own machine, and the port is bound to the loopback address.
+
+Stop them again without touching the system:
+
+```bash
+docker compose --profile monitoring down
+```
+
+### Where the numbers come from
+
+```
+every instance ──GET /status──► Service Discovery ──GET /metrics──► Prometheus ──┐
+                                 (the health check)                              │
+every service ──LogBatch on topic `logs`──► Broker ──► Loki source="broker" ────┼──► Grafana
+                                                             └──► Gateway GET /logs (download)
+every container ──stdout (the same JSON lines)──► Promtail ──► Loki source="stdout" ┤
+every service ──spans (OTLP/HTTP :4318)──► Tempo ──service graph──► Prometheus   │
+                                             └───────────────────────────────────┘
+```
+
+**Metrics: one scrape target for the whole system.** Service Discovery
+already asks every registered instance for its `GET /status` at a fixed
+interval, to decide what to remove and what to alert on, and reads the load
+out of the answer. `GET /metrics` serves that last answer rather than
+discarding it. Scraping eight services separately would collect the same
+numbers a second time and would mean eight services each growing a metrics
+endpoint to maintain.
+
+What that gives, per instance: whether it answered its last health check, how
+many consecutive checks it has failed, whether Service Discovery considers it
+critically loaded, its in-flight requests against its own limit, Session's
+open watcher sockets, the database pool for the services that report one, and
+how old each of those numbers is. Plus the thresholds they are judged
+against, so the dashboard draws the alert line from the running
+configuration instead of hard-coding it.
+
+The Gateway is the one component the registry cannot describe, because it is
+the thing that reads the registry. `METRICS_EXTRA_INSTANCES` has Service
+Discovery watch it anyway — probed for its readings alone, never registered
+or removed.
+
+**Logs: through the broker, with Promtail as the backup.** Every service sends
+its lines as `LogBatch` events on the broker's `logs` topic, and the broker
+writes them into Loki as `source="broker"` — the system's log, and what the
+Gateway's download reads. Promtail reads every container's standard output
+into Loki as well, as `source="stdout"`: it keeps what cannot go through the
+broker, such as the lines about the broker being down, what a process prints
+as it crashes, and the services that have no sender yet. It lists containers
+through the Docker API rather than being given a list, so a replica started
+with `docker compose up -d --scale player=4` is collected from without any
+config change. Every service writes, or is moving to, one JSON line per event with
+the same fields — `ts, level, service, instance, context, message`, the
+request's `traceId`, and an `error` with its full stack
+([docs/logging-and-tracing.md](docs/logging-and-tracing.md)). Promtail lifts
+`level` into a label and `traceId` into structured metadata, labels each line
+with the service's registered name, and stores everything else as written.
+
+**Traces: one request across every service.** The Gateway gives each request
+a trace id, returns it as `X-Trace-Id`, and passes it on in `traceparent`; the
+broker carries it across HTTP, gRPC and queued events. Each service sends its
+spans to Tempo, so Grafana draws a request as one timeline — Gateway, broker,
+Session, Moderation, down to the database queries — and every log line with a
+trace id links to it, and every span to its log lines.
+
+Logs and metrics share a join key. Every line carries the container id as
+`instance_id`, which is the same value Service Discovery exports on every
+metric and the same `instance` each service writes in its own lines — so the
+instance in a graph and the lines behind it are one filter apart.
+
+The monitoring containers are deliberately not collected from themselves:
+reading Loki's output and pushing it into Loki, which then logs the write, is
+a loop. `docker compose logs loki` still works.
+
+### Downloading the system's log
+
+```bash
+curl -OJ http://localhost:8080/logs -H "X-Logs-Token: $LOGS_TOKEN"
+# one request, from every service it reached
+curl -s "http://localhost:8080/logs?traceId=<X-Trace-Id>" -H "X-Logs-Token: $LOGS_TOKEN"
+```
+
+`GET /logs` on the Gateway's public port: newline-delimited JSON, oldest
+first, filtered by `since`, `service`, `level`, `traceId` and `limit`. It reads
+the lines that came through the broker (`source=stdout` or `all` for
+Promtail's copy), from Loki, so it includes instances that no longer exist; with Loki down it
+asks every registered instance instead, and `X-Logs-Source` says which. It
+takes an operator token, not a player's: the lines say which applicant is an
+impostor. Details in [docs/logging-and-tracing.md](docs/logging-and-tracing.md).
+
+### What the dashboard shows
+
+| Row | Answers |
+|---|---|
+| The system at a glance | Are all eight services registered, are their instances answering, is anything critically loaded, and is anything being collected at all |
+| Load | How full each instance is as a share of **its own** limit — 50 for Player and Session, 100 for the Python services, 16 for Rules and Records — against the line Service Discovery alerts at |
+| Health | Which instances were answering over time, and how stale each reading is, against the age at which an instance is removed |
+| What the services hold | Database pool connections, with `waiting` above zero meaning the pool rather than the service is the bottleneck, and Session's open watcher sockets against their limit |
+| Traffic | Requests per second by status and the median and 95th percentile latency, read from the Gateway's own log lines — every client request passes through it |
+| The lines themselves | Warnings and errors across every container, and the full collection, live |
+
+*PAD Team 20 — Logs* is the log side on its own: lines and errors per service,
+one request across every service by the trace id pasted into its box, every
+error with its stack, and the full collection filtered by service and level.
+
+Under a load test driving Player past its limit, the dashboard shows both
+replicas at 98% and 100% of their own limits, two instances flagged as
+critically loaded, and the Gateway's status mix shifting to mostly `429`
+with `408` and `503` appearing behind it.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GRAFANA_PORT` | `3300` | Where Grafana is published, on the loopback address |
+| `LOGS_TOKEN` | *(empty)* | The operator token for the Gateway's `GET /logs`. Empty, the download refuses every request |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4318` in `.env.example` | Where the services send spans. Empty, trace ids are still made and logged; only the export is off |
+| `METRICS_EXTRA_INSTANCES` | `gateway=http://gateway:8000` | Instances watched for metrics without registering |
+
+Both dashboards, the three data sources, and the Prometheus, Loki, Promtail
+and Tempo configuration all live in [monitoring/](monitoring/) and are provisioned on
+startup. Edits made in the Grafana UI are not written back: change the JSON
+there, or export from Grafana and replace the file.
 
 ## GitHub Workflow
 

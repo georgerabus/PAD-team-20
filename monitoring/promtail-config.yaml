@@ -1,0 +1,115 @@
+# Where the logs come from, and the only labels they carry.
+#
+# Containers are discovered through the Docker API rather than listed here, so
+# a replica started with `docker compose up --scale player=4` is collected
+# from without this file changing.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  # Survives a restart of Promtail, so the same lines are not collected twice.
+  filename: /promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+
+    relabel_configs:
+      # This system only. The socket shows every container on the machine,
+      # including whatever else the developer happens to be running.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        regex: pad-team-20
+        action: keep
+      # Not the monitoring stack's own containers. Partly because they are
+      # not part of the system being watched, and partly because collecting
+      # them is a loop: Promtail reads Loki's output, pushes it to Loki,
+      # which logs the write, which Promtail then reads. `docker compose
+      # logs loki` is still there when the collection itself needs debugging.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        regex: "prometheus|loki|promtail|grafana|tempo"
+        action: drop
+      # The Compose service name: `player`, `gateway`, `service-discovery`.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      # Four containers are named differently in Compose from the name they
+      # register under and write in their own lines. The registered name wins,
+      # so `service="rules"` finds Server Rules whichever way it was written,
+      # and the Gateway's GET /logs?service= takes the same names as the rest
+      # of the system.
+      - source_labels: ["service"]
+        regex: server-rules
+        target_label: service
+        replacement: rules
+      - source_labels: ["service"]
+        regex: university-record
+        target_label: service
+        replacement: records
+      - source_labels: ["service"]
+        regex: dm-service
+        target_label: service
+        replacement: dm
+      - source_labels: ["service"]
+        regex: moderation-service
+        target_label: service
+        replacement: moderation
+      # `pad-team-20-player-2`, which tells the replicas apart by name.
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/?(.*)"
+        target_label: container
+      # The short container id. Inside Docker this is also the hostname, which
+      # is what every service writes as `instance` in its own log lines and
+      # what Service Discovery exports as `instance_id` on every metric — so
+      # one value joins a graph to the lines behind it.
+      - source_labels: ["__meta_docker_container_id"]
+        regex: "(.{12}).*"
+        target_label: instance_id
+      # Where the line reached Loki from. Promtail reads standard output, and
+      # is the backup: the services also send their lines to the broker's
+      # `logs` topic, which writes them as source="broker". The Gateway's log
+      # download reads only those, so nothing is counted twice; these remain
+      # for what never reaches the broker — a service that has no sender yet,
+      # what a process prints as it crashes, the lines about the broker being
+      # down.
+      - target_label: source
+        replacement: stdout
+
+    pipeline_stages:
+      # The NestJS services colour their output, and the escape sequences
+      # would otherwise be part of every line searched and displayed.
+      - replace:
+          expression: '(\x1b\[[0-9;]*m)'
+          replace: ""
+      # Every service writes, or is moving to, one JSON line per event with a
+      # shared set of fields (docs/logging-and-tracing.md). From those lines
+      # two things are lifted at collection time:
+      # - `level` as a label, so "every error in the system" is an index
+      #   lookup rather than a scan. Six values, so it costs nothing.
+      # - `traceId` as structured metadata: searchable and shown with the
+      #   line, but not a label, since every request has a new one and a
+      #   label per request would make an index entry per request.
+      # A line that is not JSON passes through these untouched, unlabelled.
+      - json:
+          expressions:
+            level: level
+            traceId: traceId
+      - labels:
+          level:
+      - structured_metadata:
+          traceId:
+
+# Nothing beyond `level` and `traceId` is extracted here. Until every service
+# writes the shared JSON line, the services write five different formats
+# between them — JSON from the broker, JSON behind a
+# prefix from the Gateway, coloured text from the NestJS services, Laravel and
+# nginx lines from Applicant, Python logging from Service Discovery — and
+# parsing all five at collection time would mean five pipelines to keep
+# correct, and a label set that grows with every service that changes its
+# logger. Loki stores the line; LogQL parses it at query time, where a wrong
+# guess costs a query rather than a day of unsearchable logs.

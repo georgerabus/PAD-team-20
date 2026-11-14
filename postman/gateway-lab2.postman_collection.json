@@ -2,12 +2,12 @@
   "info": {
     "name": "Gateway Lab 2 - staged verification",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Run folders separately. Configured and unconfigured cases are mutually exclusive. Supply a real session token and its sessionId locally; no mock tokens. HTTP negotiation checks do not establish WebSockets."
+    "description": "Staged verification of the Gateway's WebSocket negotiation, from Lab 2. Run folders separately: the configured and unconfigured cases need different deployments and are mutually exclusive. Supply a real session token and its sessionId locally; no mock tokens. HTTP negotiation checks do not establish WebSockets.\n\nThe Gateway is published on 8080, not 8000 \u2014 gatewayBaseUrl says so now; it was pointing at a port nothing has published since Lab 2.\n\nEveryday coverage of negotiation lives in the Discord DMs & Moderation collection, which opens a real shift and negotiates both sockets without anything being pasted in by hand. Keep this one for the two deployment cases that collection cannot cover in a single run."
   },
   "variable": [
     {
       "key": "gatewayBaseUrl",
-      "value": "http://localhost:8000"
+      "value": "http://127.0.0.1:8080"
     },
     {
       "key": "sessionToken",

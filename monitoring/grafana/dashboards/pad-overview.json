@@ -1,0 +1,526 @@
+{
+  "uid": "pad-overview",
+  "title": "PAD Team 20 — System Overview",
+  "description": "What every service instance is doing, and the lines behind it. Metrics come from Service Discovery's GET /metrics, which serves the health check's own readings; logs come from every container through Promtail.",
+  "tags": ["pad", "team-20"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"] },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service (metrics)",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+        "query": { "query": "label_values(pad_instance_registered, service)", "refId": "A" },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" },
+        "sort": 1
+      },
+      {
+        "name": "log_service",
+        "label": "Service (logs)",
+        "description": "A separate list because a container's Compose name is not always the name it registers under: the registry calls them dm, rules and records, Compose calls them dm-service, server-rules and university-record.",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "pad-loki" },
+        "query": { "label": "service", "refId": "LokiVariableQueryEditor-VariableQuery", "type": 1 },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "text": "All", "value": "$__all" },
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "The system at a glance",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Services in the registry",
+      "description": "Distinct service names with at least one instance. Eight is the full system; a number below that means something failed to register or was removed after failing its health checks.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "count(pad_service_instances)", "instant": true, "legendFormat": "services" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 6 },
+              { "color": "green", "value": 8 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Instances answering",
+      "description": "Instances that answered their most recent health check, out of all that are registered or watched.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "sum(pad_instance_up)", "instant": true, "legendFormat": "up" },
+        { "refId": "B", "expr": "count(pad_instance_registered)", "instant": true, "legendFormat": "known" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Instances critically loaded",
+      "description": "Instances over pad_load_critical_ratio of their own limit. This is Service Discovery's own alert state, the same crossing that writes an ALERT line and sends the webhook — not a threshold re-judged here.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "sum(pad_instance_overloaded)", "instant": true, "legendFormat": "overloaded" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Requests through the Gateway",
+      "description": "Completed client requests per second, counted from the Gateway's own log lines. Every request a client makes passes through it, so this is the system's throughput.",
+      "datasource": { "type": "loki", "uid": "pad-loki" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate({source=\"stdout\", service=\"gateway\"} |= \"REQUEST\" [$__auto]))",
+          "queryType": "range",
+          "legendFormat": "req/s"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "blue" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Log lines collected",
+      "description": "Lines per second reaching Loki from every container. Zero here while the system is busy means the collection has stopped, not the system.",
+      "datasource": { "type": "loki", "uid": "pad-loki" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate({container=~\"pad-team-20-.+\"} [$__auto]))",
+          "queryType": "range",
+          "legendFormat": "lines/s"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 1, "color": { "mode": "fixed", "fixedColor": "purple" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Load",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "How full each instance is",
+      "description": "In-flight requests as a share of that instance's own limit. The limits differ — 50 for Player and Session, 100 for the Python services, 16 for Rules and Records — so the share is comparable where the raw count is not. The dashed line is the threshold Service Discovery alerts at, read from the same endpoint rather than written in here.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * pad_instance_in_flight{service=~\"$service\"} / pad_instance_concurrency_limit{service=~\"$service\"}",
+          "legendFormat": "{{service}} · {{instance_id}}"
+        },
+        {
+          "refId": "B",
+          "expr": "100 * pad_load_critical_ratio",
+          "legendFormat": "alert threshold"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": { "fillOpacity": 8, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "alert threshold" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Instances per service",
+      "description": "What the registry holds. A step down is an instance removed after failing its health checks; a step up is one registering.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "pad_service_instances{service=~\"$service\"}", "legendFormat": "{{service}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never", "lineInterpolation": "stepAfter" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "state-timeline",
+      "title": "Which instances were answering",
+      "description": "One band per instance. A gap in the band is an instance that had not yet been probed; red is one that failed its last check but has not yet been removed.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "pad_instance_up{service=~\"$service\"}", "legendFormat": "{{service}} · {{instance_id}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 85, "lineWidth": 0 },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "down", "color": "red", "index": 0 },
+                "1": { "text": "up", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "How stale each reading is",
+      "description": "Seconds since each instance last answered. It sits near the health check interval while everything is well, and climbs for an instance that has stopped answering but has not yet failed enough checks to be removed.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pad_instance_reading_age_seconds{service=~\"$service\"}",
+          "legendFormat": "{{service}} · {{instance_id}}"
+        },
+        {
+          "refId": "B",
+          "expr": "pad_health_check_interval_seconds * pad_max_failed_checks",
+          "legendFormat": "removed after"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "removed after" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "What the services hold",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Database pool",
+      "description": "Connections held by the services that report them. `waiting` above zero means requests are queuing for a connection — the pool, not the service, is the bottleneck.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service, state) (pad_instance_db_connections{service=~\"$service\"})",
+          "legendFormat": "{{service}} · {{state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Open watcher sockets",
+      "description": "Sockets held open for a whole shift, counted apart from the request budget because one is held for minutes rather than milliseconds. Only Session reports them.",
+      "datasource": { "type": "prometheus", "uid": "pad-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pad_instance_watchers_open{service=~\"$service\"}",
+          "legendFormat": "{{service}} · {{instance_id}}"
+        },
+        {
+          "refId": "B",
+          "expr": "pad_instance_watchers_limit{service=~\"$service\"}",
+          "legendFormat": "limit · {{instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "limit.*" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Traffic, from the Gateway's own logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per second by status",
+      "description": "Parsed from the Gateway's log lines at query time. The Gateway writes one JSON line per completed request, so this counts what clients actually got back, refusals included. The regexp pulls the JSON out from behind uvicorn's `INFO:` prefix, which `| json` alone would choke on.",
+      "datasource": { "type": "loki", "uid": "pad-loki" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 35 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate({source=\"stdout\", service=\"gateway\"} |= \"REQUEST\" | regexp `(?P<payload>\\{.*\\})` | line_format \"{{.payload}}\" | json | __error__=\"\" [$__auto]))",
+          "queryType": "range",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": { "fillOpacity": 25, "lineWidth": 1, "showPoints": "never", "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "How long the Gateway took",
+      "description": "The median and the slowest 5%, in milliseconds, from the durationMs the Gateway records on every request. The gap between the two lines is where a bottleneck shows before the median moves.",
+      "datasource": { "type": "loki", "uid": "pad-loki" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 35 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "quantile_over_time(0.5, {source=\"stdout\", service=\"gateway\"} |= \"REQUEST\" | regexp `(?P<payload>\\{.*\\})` | line_format \"{{.payload}}\" | json | __error__=\"\" | unwrap durationMs [$__auto]) by (service)",
+          "queryType": "range",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "B",
+          "expr": "quantile_over_time(0.95, {source=\"stdout\", service=\"gateway\"} |= \"REQUEST\" | regexp `(?P<payload>\\{.*\\})` | line_format \"{{.payload}}\" | json | __error__=\"\" | unwrap durationMs [$__auto]) by (service)",
+          "queryType": "range",
+          "legendFormat": "95th percentile"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "custom": { "fillOpacity": 8, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "The lines themselves",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "logs",
+      "title": "Warnings and errors, everywhere",
+      "description": "Every container's lines, narrowed to the ones that say something went wrong. The services write five different log formats between them, so this matches on the words rather than on a parsed level.",
+      "datasource": { "type": "loki", "uid": "pad-loki" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 45 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{source=\"stdout\", service=~\"$log_service\"} |~ \"(?i)(warn|error|fatal|critical|exception|traceback|ALERT)\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Everything",
+      "description": "The whole collection, newest first. The same lines the Gateway's GET /logs serves as a download, in a window that follows them live.",
+      "datasource": { "type": "loki", "uid": "pad-loki" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 56 },
+      "targets": [
+        { "refId": "A", "expr": "{source=\"stdout\", service=~\"$log_service\"}", "queryType": "range" }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

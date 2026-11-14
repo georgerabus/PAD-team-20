@@ -2,4 +2,6 @@
 
 # Secrets for docker-compose.yml, never committed (see .env.example)
 .env
+.env.*
+!.env.example
 keys/

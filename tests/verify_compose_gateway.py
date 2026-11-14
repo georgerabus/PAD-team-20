@@ -173,12 +173,13 @@ def main():
     parser.add_argument('--rules-image', required=True)
     parser.add_argument('--records-image', required=True)
     parser.add_argument('--service-discovery-image')
+    parser.add_argument('--broker-image')
     parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.1.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:3.0.0')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:3.0.0')
-    parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:3.2.1')
-    parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:3.1.1')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:4.0.0')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:4.0.0')
+    parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:4.5.0')
+    parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:4.5.0')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     checks = []
@@ -224,6 +225,7 @@ def main():
             # what a released Service Discovery should be checked against.
             **({'SERVICE_DISCOVERY_IMAGE': args.service_discovery_image}
                if args.service_discovery_image else {}),
+            **({'BROKER_IMAGE': args.broker_image} if args.broker_image else {}),
             'DM_IMAGE': args.dm_image, 'MODERATION_IMAGE': args.moderation_image,
             'GATEWAY_HTTP_PORT': str(ports[0]),
             'DM_WS_PORT': str(dm_ports[0]), 'DM_WS_PORT_LAST': str(dm_ports[-1]),
@@ -347,6 +349,30 @@ def main():
                     check(f'{name} replica answers its /status with load',
                           (status, sorted(body.get('load', {}))) if isinstance(body, dict) else status,
                           (200, ['inFlight', 'limit']))
+            # The Message Broker registers like every instance, and delivers a
+            # request to an instance of the service it names.
+            brokers = wait_registered('broker', 1, 60)
+            check('the broker registers with Service Discovery as http://<hostname>:8000',
+                  len(brokers) == 1 and re.fullmatch(r'http://[a-z0-9-]+:8000', brokers[0]) is not None, True)
+            broker = 'http://broker:8000'
+            status, body = internal('/status', base=broker)
+            check('the broker answers its /status with load',
+                  (status, sorted(body.get('load', {}))) if isinstance(body, dict) else status,
+                  (200, ['inFlight', 'limit']))
+            check('the broker lists its topics', internal('/topics', base=broker)[0], 200)
+
+            def envelope(target):
+                return {'messageId': str(uuid.uuid4()), 'kind': 'request', 'source': 'verify',
+                        'target': target, 'operation': 'CheckDelivery', 'payload': {}}
+
+            status, reply = internal('/messages', 'POST', envelope('applicant'), base=broker)
+            check('the broker delivers a request to a registered Applicant instance',
+                  (status, reply.get('instance') in registered('applicant')) if isinstance(reply, dict) else status,
+                  (200, True))
+            status, reply = internal('/messages', 'POST', envelope('nobody'), base=broker)
+            check('a request for an unregistered service gets a 503 reply from the broker',
+                  (status, reply.get('source'), reply.get('status')) if isinstance(reply, dict) else status,
+                  (200, 'broker', 503))
             applicant_instances = registered('applicant')
             if len(applicant_instances) == replicas['applicant']:
                 target = applicant_instances[0]

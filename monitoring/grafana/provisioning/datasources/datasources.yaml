@@ -1,0 +1,58 @@
+# All three data sources, created when Grafana starts rather than clicked
+# together afterwards: the dashboard is in this repository and has to find
+# them by a fixed uid on any machine that runs the stack.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: pad-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Matches prometheus.yml, so Grafana picks sensible step sizes.
+      timeInterval: 5s
+
+  - name: Loki
+    type: loki
+    uid: pad-loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 2000
+      # A trace id in a line becomes a link to that request's timeline in
+      # Tempo. Matched on the text, so it works for every format that writes
+      # `"traceId":"..."`, including the PHP services' Laravel lines. (`$$` is
+      # a literal `$` in a provisioning file.)
+      derivedFields:
+        - name: traceId
+          matcherType: regex
+          matcherRegex: '"traceId":"([0-9a-f]{32})"'
+          datasourceUid: pad-tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: Open the trace
+
+  # One request as a timeline across every service it reached.
+  - name: Tempo
+    type: tempo
+    uid: pad-tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # From a span, every log line written for its request, from every
+      # service: the same search as GET /logs?traceId= on the Gateway.
+      tracesToLogsV2:
+        datasourceUid: pad-loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        customQuery: true
+        query: '{service=~".+"} |= "$${__trace.traceId}"'
+      # Which service calls which, drawn from the metrics Tempo writes to
+      # Prometheus.
+      serviceMap:
+        datasourceUid: pad-prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: pad-loki
