@@ -273,7 +273,7 @@ services:
     restart: unless-stopped
 
   dm-service:
-    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.4.0}
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.5.0}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -304,6 +304,15 @@ services:
       # DM_CREDENTIAL_GRPC_ADDRESS overrides the address; set it empty to fall
       # back to REST.
       CREDENTIAL_GRPC_ADDRESS: ${DM_CREDENTIAL_GRPC_ADDRESS-broker:9001}
+      # Channel access is checked with Session's
+      # /pad.session.v1.Session/CheckChannelAccess through the broker instead
+      # of SESSION_URL above. Needs a Session image from 4.0.0-rc.3 on.
+      # DM_SESSION_GRPC_ADDRESS overrides the address; set it empty to fall
+      # back to REST.
+      SESSION_GRPC_ADDRESS: ${DM_SESSION_GRPC_ADDRESS-broker:9001}
+      # Log lines go to the broker (topic logs, then Loki) on their own;
+      # spans go to Tempo. See docs/logging-and-tracing.md.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     volumes:
@@ -345,7 +354,7 @@ services:
     restart: unless-stopped
 
   moderation-service:
-    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.4.0}
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.5.0}
     depends_on:
       moderation-db:
         condition: service_healthy
@@ -370,6 +379,14 @@ services:
       # fall back to REST.
       APPLICANT_GRPC_ADDRESS: broker:9001
       CREDENTIAL_GRPC_ADDRESS: broker:9001
+      # Decision outcomes are reported with Session's
+      # /pad.session.v1.Session/ReportOutcome through the broker instead of
+      # SESSION_URL above. Needs a Session image from 4.0.0-rc.3 on; remove it
+      # to fall back to REST.
+      SESSION_GRPC_ADDRESS: broker:9001
+      # Log lines go to the broker (topic logs, then Loki) on their own;
+      # spans go to Tempo. See docs/logging-and-tracing.md.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Every replica registers here on startup as http://$HOSTNAME:3000.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     deploy:
