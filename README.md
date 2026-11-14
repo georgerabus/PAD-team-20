@@ -10,6 +10,10 @@ A game set in a university Discord server where a moderation team decides who ge
 - [Communication Contract](#communication-contract)
   - [Through the broker](#through-the-broker)
   - [Service-to-service calls](#service-to-service-calls)
+  - [Replicated databases](#replicated-databases)
+  - [Creating an applicant across three databases](#creating-an-applicant-across-three-databases)
+  - [Cache](#cache)
+  - [Warehouse and ETL](#warehouse-and-etl)
 - [Running the System](#running-the-system)
 - [Monitoring](#monitoring)
 - [GitHub Workflow](#github-workflow)
@@ -378,6 +382,9 @@ have the applicant when the caller receives its `applicantId`. If one of them
 does not accept the story, the call answers `502 PEER_UNAVAILABLE` and the
 service keeps nothing, so the caller can ask again. A service that already has
 the `applicantId` leaves it as it is and answers `200`.
+
+Lab 5 replaces this hand-over with a two-phase commit or a saga: see
+[Creating an applicant across three databases](#creating-an-applicant-across-three-databases).
 
 All three are Laravel and generate with the same `StoryGenerator` class, copied
 unchanged into each service, so a story looks the same whichever service starts
@@ -909,6 +916,377 @@ itself over REST.
 |---|---|---|---|
 | Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision | `ReportOutcome` |
 | Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access | `CheckChannelAccess` |
+
+### Replicated databases
+
+Each service keeps its own database, under the same host name, database name,
+user and password as before. What answers there is now a cluster of three
+PostgreSQL 17 nodes run by Patroni, one primary and two replicas, which elect
+the primary through a three-node etcd shared by every cluster. The host name a
+service already uses (`applicant-db`, `credential-db`, …) belongs to an HAProxy
+in front of its cluster, so no service changes its configuration:
+
+| Port | Reaches | Used by |
+|---|---|---|
+| `5432` | the current primary, reads and writes | the service |
+| `5433` | the two replicas, read only, in turn | the ETL, and nothing else |
+
+A service reads from the primary too: a replica can be a moment behind, and a
+read right after a write could miss it.
+
+Replication is synchronous: a commit returns once one replica has it as well,
+so a failover never loses a write that was already confirmed, a prepared
+transaction included. With one replica down, the primary carries on with the
+other. With both down, it carries on alone and unprotected until one is back,
+and if it stops in that state Patroni promotes neither, since both may be
+behind.
+
+**Failover.** When the primary stops, Patroni promotes a replica within about
+25 seconds. HAProxy asks each node's Patroni which one is the primary, sends new
+connections there and closes the ones still open to the old primary. The
+service sees its connection drop and opens a new one on its next query. A
+transaction open at that moment is lost, and so is the request it belonged to.
+
+**A request that needs the database while it cannot be reached** answers:
+
+```json
+503 { "error": "DEPENDENCY_UNAVAILABLE", "message": "human readable", "details": {} }
+```
+
+That is a query that fails on a connection error (SQLSTATE class `08`), on a
+server shutting down or starting up (`57P01`, `57P02`, `57P03`) or on a server
+that is read only (`25006`). Through the broker it is a reply with status
+`503`, or `UNAVAILABLE` with `x-error: DEPENDENCY_UNAVAILABLE` over gRPC.
+
+The failure is the database's, not the instance's, and every instance of the
+service shares that database, so the code never counts against an instance.
+The broker already counts neither a reply's status nor a gRPC error that
+carries `x-error`. The Gateway passes a `503 DEPENDENCY_UNAVAILABLE` on as it
+is, without counting it or trying again, where it counts any other `503`.
+Otherwise one failover would trip every instance of the service and remove them
+all from Service Discovery.
+
+**`GET /status` does not touch the database**, for the same reason: Service
+Discovery calls it every 10 seconds and drops an instance after three failures.
+
+The clusters start empty; nothing is carried over from the single databases.
+Every service creates its schema on startup, as it does today, and the
+template runs each `db/<service>/` script once, when the cluster is created.
+Every node allows prepared transactions, for the two-phase commit below
+(`max_prepared_transactions` 64, the same on every node, since a replica
+refuses to run with less than its primary), and every cluster has the read-only user `etl`, for the warehouse.
+
+### Creating an applicant across three databases
+
+Creating an applicant is the only change that spans databases: Applicant,
+Credential and University Record each keep a slice of the same story (see
+[Data management](#data-management-and-the-applicant-bootstrap)). The hand-over
+described there is not atomic: if University Record refuses the story after
+Credential has kept its slice, Credential keeps it and nobody removes it. Lab 5
+replaces the hand-over with a two-phase commit or a saga, chosen on Applicant
+with `HANDOVER_PROTOCOL=2pc|saga` (default `saga`). Both coordinators run in
+the broker, which already reaches every instance and keeps its state in
+`/data`.
+
+**Applicant writes nothing itself.** Contacted by Session, it generates the
+story, gives it to a coordinator under an ID of its own choosing and waits at
+most 5 seconds, less if Session's deadline is nearer. Every write, Applicant's
+own slice included, is a call from the coordinator, which records it in `/data`
+before making it. Nothing therefore depends on Applicant staying up: a
+coordinator that restarts finishes what it started. Applicant answers Session's
+`CreateApplicant`:
+
+| The coordinator | Applicant answers |
+|---|---|
+| finished: `committed` (2PC) or `completed` (saga) | `201 {applicantId}`, as today |
+| finished: `aborted` or `compensated` | `502 PEER_UNAVAILABLE`, as today: nothing is kept anywhere, ask again |
+| finished: `failed` (saga only, see below) | `500 HANDOVER_FAILED` |
+| not finished within the wait, or not reachable | `202 {applicantId, statusPath}` |
+
+**A `202` is a promise, not a failure**: the creation ends by itself, one way
+or the other. Session reads `GET http://broker:8000<statusPath>`
+(`/sagas/{id}` or `/transactions/{id}`) about once a second until it ends:
+`completed` or `committed`, the applicant is ready everywhere; `compensated`,
+`aborted`, `failed` or `404`, nothing was kept, so it asks for another
+applicant. A `404` only happens when Applicant could not reach the broker and
+the broker never recorded the creation. Session sending the same message again
+gets the same `202`, as replies are stored per `messageId`.
+
+**How a coordinator calls a participant.** As an envelope on the participant's
+`POST /broker/deliver`, with the same instance selection, reroute and breaker
+as any request. Applicant, Credential and University Record already serve that
+endpoint, so no `.proto` changes, and the broker needs none of their stubs.
+
+| Field | Value |
+|---|---|
+| `messageId` | a UUIDv5 whose namespace is the `transactionId` or `sagaId` and whose name is the call (`credential:TxPrepare`, `2:do`, `2:undo`): the same for every attempt at one call, so a participant applies it once |
+| `correlationId` | the `transactionId` or `sagaId` |
+| `source` | `broker` |
+| `target`, `operation`, `payload` | the call's |
+| `identity` | `null` |
+| `deadline` | 10 seconds after the attempt starts |
+
+#### Two-phase commit
+
+```
+POST /transactions
+{ "transactionId": "UUID",
+  "participants": [
+    { "service": "applicant",  "operation": "CreateApplicant", "data": ApplicantStory },
+    { "service": "credential", "operation": "CreateApplicant", "data": ApplicantStory },
+    { "service": "records",    "operation": "CreateApplicant", "data": ApplicantStory } ],
+  "waitSeconds": 5 }
+```
+
+`service` is the name the participant registers with Service Discovery.
+
+1. The coordinator records the transaction as `preparing`.
+2. It sends `TxPrepare` to every participant at once. A participant makes the
+   changes and keeps them prepared instead of committing them. A `2xx` is a
+   yes. Anything else, no answer before the deadline included, is a no. Each
+   participant is sent `TxPrepare` once (the broker's reroute aside).
+3. Once every `TxPrepare` has been answered or run out of time, it records the
+   decision: `commit` if every answer was yes, `abort` otherwise. Recording it
+   is the moment the transaction commits.
+4. It sends the decision, `TxCommit` or `TxAbort`, to every participant, and
+   sends it again to each until that one answers `2xx`, after pauses that
+   double from 0.5 to 30 seconds.
+
+Presumed abort: a transaction without a decision is aborted. A coordinator that
+restarts records `abort` for every transaction still `preparing`, then sends
+again every decision that is not yet acknowledged.
+
+States: `preparing` → `committing` → `committed`, or `preparing` → `aborting` →
+`aborted`.
+
+#### Saga
+
+```
+POST /sagas
+{ "sagaId": "UUID",
+  "steps": [
+    { "service": "credential", "operation": "CreateApplicant", "payload": ApplicantStory,
+      "compensation": { "operation": "DeleteApplicant", "payload": { "applicantId": "UUID" } } },
+    { "service": "records", "operation": "CreateApplicant", "payload": ApplicantStory,
+      "compensation": { "operation": "DeleteApplicant", "payload": { "applicantId": "UUID" } } },
+    { "service": "applicant", "operation": "CreateApplicant", "payload": ApplicantStory,
+      "compensation": null } ],
+  "waitSeconds": 5 }
+```
+
+The coordinator runs the steps in order, and records each one before sending it
+and once it is answered.
+
+- **Refused**, any `4xx` except `408` and `429`: the step failed, and the
+  coordinator runs the compensations of the steps already done, newest first.
+- **No usable answer**, a `5xx`, `408`, `429` or nothing before the deadline:
+  the same message is sent again after pauses that double from 0.5 to 5
+  seconds, for up to 30 seconds from the first attempt. Then the step failed.
+- **A compensation** is sent again until it succeeds, after pauses that double
+  up to 30 seconds. It is never refused; if one is, the saga stops as `failed`,
+  for a person to look at.
+- **A step without a compensation** comes after every step that has one, and is
+  sent again until it succeeds: once the steps that can be undone are done, the
+  saga only goes forward. A refusal there also stops it as `failed`.
+
+Applicant's slice is that last step because it is what makes the applicant
+visible: players only find applicants through Applicant, so nobody sees one
+half made, and no service needs a pending state. University Record's step is
+the one that decides; once it has kept its slice, the saga completes.
+
+A coordinator that restarts resumes every unfinished saga at the step it was
+on, by sending the same message again; a participant that already handled it
+answers from its record.
+
+States: `running` → `completed`, or `running` → `compensating` →
+`compensated`, or `failed`.
+
+#### The coordinators' endpoints
+
+On the broker's port 8000, next to `POST /messages`:
+
+| Method & path | Request | Response |
+|---|---|---|
+| `POST /transactions` | above | `201 Transaction` *(finished within `waitSeconds`)* \| `202 Transaction` *(not yet)* \| `409 TRANSACTION_CONFLICT` \| `422` \| `503 TRANSACTION_STORE_UNAVAILABLE` |
+| `GET /transactions/{id}` | — | `200 Transaction` \| `404 TRANSACTION_NOT_FOUND` |
+| `POST /sagas` | above | `201 Saga` *(finished within `waitSeconds`)* \| `202 Saga` *(not yet)* \| `409 SAGA_CONFLICT` \| `422` \| `503 SAGA_STORE_UNAVAILABLE` |
+| `GET /sagas/{id}` | — | `200 Saga` \| `404 SAGA_NOT_FOUND` |
+
+- `waitSeconds` is 0 to 10, by default 0.
+- A `POST` with an ID that already exists and the same body answers what a
+  `GET` would, `201` or `202`, so it can be repeated safely. With a different
+  body it is `409`.
+- A `503` means nothing was recorded and nothing started; Applicant then
+  answers `502`.
+- Like `POST /messages`, they count against `MAX_CONCURRENT_REQUESTS` (`429`)
+  and are traced: every call a coordinator makes joins the trace of the `POST`
+  that started it, also after a restart.
+
+```json
+// Transaction
+{ "transactionId": "UUID",
+  "state": "enum(preparing|committing|committed|aborting|aborted)",
+  "decision": "enum(commit|abort)|null",
+  "participants": [
+    { "service": "credential", "operation": "CreateApplicant",
+      "vote": "enum(yes|no)|null", "acknowledged": "bool",
+      "lastError": { "status": "int", "error": "string", "message": "string" } } ],  // or null
+  "createdAt": "timestamp", "updatedAt": "timestamp" }
+
+// Saga
+{ "sagaId": "UUID",
+  "state": "enum(running|completed|compensating|compensated|failed)",
+  "steps": [
+    { "service": "credential", "operation": "CreateApplicant",
+      "compensation": "DeleteApplicant",      // or null
+      "state": "enum(pending|done|failed|compensated)", "attempts": "int",
+      "lastError": { "status": "int", "error": "string", "message": "string" } } ],  // or null
+  "createdAt": "timestamp", "updatedAt": "timestamp" }
+```
+
+The payloads stay out of both: they hold the whole story.
+
+#### What a participant serves
+
+Applicant, Credential and University Record, as operations through the broker:
+
+| Operation | Payload | Answers |
+|---|---|---|
+| `CreateApplicant` | `ApplicantStory` | `201 {applicantId}` \| `200` *(already had it)*, unchanged |
+| `DeleteApplicant` | `{applicantId}` | `200 {applicantId, deleted:bool}` *(Credential and University Record)* |
+| `TxPrepare` | `{transactionId, operation, data}` | `200 {transactionId}` \| the operation's own refusal \| `409 TRANSACTION_ABORTED` |
+| `TxCommit` | `{transactionId}` | `200 {transactionId}` \| `409 TRANSACTION_NOT_PREPARED` |
+| `TxAbort` | `{transactionId}` | `200 {transactionId}` \| `409 TRANSACTION_COMMITTED` |
+
+Each answers `503 DEPENDENCY_UNAVAILABLE` while its database cannot be reached,
+and the coordinator tries again. Three rules make the coordinators correct:
+
+1. **Nothing is committed or prepared after the message's deadline.** Work
+   that runs out of time is rolled back. A coordinator relies on it whenever it
+   acts on a timeout: past its deadline, a call that was not answered can no
+   longer take effect.
+2. **Every operation can be repeated.** `CreateApplicant` and
+   `DeleteApplicant` are applied once per `messageId`, through
+   `handled_messages` as `CreateApplicant` already is; the `Tx` operations once
+   per `transactionId`.
+3. **A compensation succeeds whenever its payload is valid.** `DeleteApplicant`
+   for an applicant the service does not have answers `200 {deleted:false}`,
+   not `404`: the step it undoes may never have arrived.
+
+**`TxPrepare`** does what `operation` does with `data`, with the same checks
+and the same writes (an applicant already kept counts as done), inside a
+transaction that also records the `transactionId` as committed. It ends that
+transaction with `PREPARE TRANSACTION '<transactionId>'` instead of a commit.
+What each operation does depends on what the participant already holds:
+
+| Already there | `TxPrepare` | `TxCommit` | `TxAbort` |
+|---|---|---|---|
+| nothing | prepares: `200`, or the refusal | `409 TRANSACTION_NOT_PREPARED` | records it aborted: `200` |
+| a prepared transaction | `200` | `COMMIT PREPARED`: `200` | `ROLLBACK PREPARED`, records it aborted: `200` |
+| recorded as committed | `200` | `200` | `409 TRANSACTION_COMMITTED` |
+| recorded as aborted | `409 TRANSACTION_ABORTED` | `409 TRANSACTION_NOT_PREPARED` | `200` |
+
+A prepared transaction is a row of `pg_prepared_xacts` whose `gid` is the
+`transactionId`. The record is a row in the participant's own database, keyed
+by the `transactionId`; Applicant and Credential keep it in `handled_messages`.
+The committed record is written inside the prepared transaction, so it exists
+only if that transaction commits. The aborted record is what turns away a
+`TxPrepare` that arrives after the abort, since the broker can deliver a
+message twice.
+
+A participant does nothing on its own to recover: a prepared transaction
+survives a restart and a failover, and only the coordinator commits or aborts
+it.
+
+For a Laravel participant:
+
+- `PREPARE TRANSACTION`, `COMMIT PREPARED` and `ROLLBACK PREPARED` take a
+  literal, not a bound parameter, so the `transactionId` is checked to be a
+  UUID first.
+- The transaction is opened with `DB::statement('BEGIN')`, not
+  `DB::transaction()` or `HandledMessages::once()`, which would commit it:
+  after `PREPARE TRANSACTION` the connection has no transaction left.
+
+### Cache
+
+The Gateway caches in Valkey the answers to GET requests and the tokens it has
+verified. No other service uses Valkey.
+
+**Three nodes, sharded by the Gateway.** `valkey-1`, `valkey-2` and `valkey-3`
+keep nothing on disk and evict the least recently used keys when full
+(`allkeys-lru`): losing one loses only cache. The Gateway picks the node for
+each key on a consistent-hashing ring of its own. Every node owns 160 points of
+a 32-bit ring, and a key belongs to the node of the first point after its
+hash, so a node added or lost moves only the keys next to its own points,
+about one key in N, where `hash % N` would move most of them. This is not Redis
+Cluster, whose 16384 hash slots are assigned to nodes and moved between them
+explicitly.
+
+A node that does not answer leaves the ring until it answers again, and the
+cache never fails a request: when Valkey cannot answer, the request goes to the
+service, with `X-Cache: MISS`.
+
+**GET answers.**
+
+- Only a client's request, on port `8000`, answered `200` and without
+  `Cache-Control: no-store`, is cached: for the answer's `max-age` if it sets
+  one, otherwise 30 seconds.
+- The key is `gw:get:{service}:{generation}:{sha256(path?query + identity)}`,
+  where identity is the four identity headers the Gateway sends with the
+  request, empty on a public route. Two callers never share an entry.
+- The entry keeps the status, the headers and the body. Every GET on port
+  `8000` is answered with `X-Cache: HIT` or `X-Cache: MISS`.
+
+**Invalidation.** A request with any other method to a service, once answered
+`2xx`, increments that service's generation, `gw:gen:{service}`: every entry
+kept for the service stops being found and expires on its own. The prefix a
+write invalidates is therefore the service. Keys are hashes spread over three
+nodes, so they cannot be matched by prefix, and one `INCR` replaces a scan of
+all three.
+
+A change that does not come through the Gateway, a broker operation or a
+WebSocket message, invalidates nothing, so an answer can be up to 30 seconds
+old. **Owners mark `Cache-Control: no-store`** on every GET whose answer
+changes that way and must be seen at once, such as Applicant's
+`GET /applicants?sessionId=`, which Session fills through the broker.
+
+**Tokens.** `gw:auth:{sha256(token)}` holds the claims the Gateway read from a
+valid token, for 30 seconds and never past the token's `exp`. The key is a
+hash, so Valkey never holds a token that could be used. A token that fails the
+check is not cached.
+
+### Warehouse and ETL
+
+`warehouse-db` is a PostgreSQL 17 database with a star schema, which Grafana
+reads. The `etl` service, in Python, loads it every 5 minutes and on
+`POST /etl/run`, which answers
+`200 {runId, startedAt, finishedAt, rows:{<table>:int}}` or `409 ETL_RUNNING`.
+Like every service, it publishes no port.
+
+The ETL reads each service's database on port `5433` of its usual host, the
+replicas, as the user `etl` (`pg_read_all_data`, password `ETL_DB_PASSWORD` in
+`.env`), so a load never weighs on a primary. It joins each database's network
+to do so. Until the replicated databases land, it reads today's databases on
+`5432` with each service's own user.
+
+Loading is incremental. For each table it reads the rows changed since the
+table's watermark minus one minute and inserts or updates them by primary key,
+so a row committed late is not missed and a row read twice does no harm. The
+watermarks are kept in the warehouse's `etl_runs` table.
+
+**What leaves a service's database**: identifiers, timestamps, categories,
+numbers and booleans. Never a secret (password hashes, tokens, keys,
+signatures), never anything that names or reaches a person, real or generated
+(names, usernames, emails, student IDs, messages, free text), and never a whole
+JSON document: the ETL takes out the fields it needs.
+
+**Every owner tells Part 4**, on the warehouse card, for each table the
+warehouse needs: its primary key; the column that holds the time of the last
+change, or that it has none; whether rows are ever deleted; and the columns to
+copy, without the personal ones and the secrets. Incremental loading misses a
+table without such a column and every deleted row (the saga's compensations
+delete from Credential and University Record), so such a table is loaded whole
+on every run, or left out.
 
 ## Running the System
 
