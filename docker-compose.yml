@@ -67,7 +67,7 @@ services:
   # Every service instance registers here on startup; Gateway reads the
   # registry to spread requests across the instances of each service.
   service-discovery:
-    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:4.0.0-rc.2}
+    image: ${SERVICE_DISCOVERY_IMAGE:-georgerabus/pad-service-discovery:4.0.0}
     environment:
       # An instance is called critical at this share of its own limit, and the
       # alert is logged. With a webhook set it is also sent there; unset, the
@@ -97,7 +97,7 @@ services:
   # registers itself with Service Discovery and retries until it answers, so
   # it needs no start order.
   broker:
-    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0-rc.6}
+    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0}
     environment:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
@@ -498,7 +498,7 @@ services:
     restart: unless-stopped
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:4.0.0-rc.2}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:4.0.0}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -539,7 +539,7 @@ services:
     restart: unless-stopped
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:4.0.0-rc.2}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:4.0.0}
     depends_on:
       credential-db:
         condition: service_healthy
