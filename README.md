@@ -1238,6 +1238,21 @@ and the coordinator tries again. Three rules make the coordinator correct:
    for an applicant the service does not have answers `200 {deleted:false}`,
    not `404`: the step it undoes may never have arrived.
 
+`tests/verify_saga.py` runs the saga end to end in disposable containers, in
+about 75 seconds: the real broker, Applicant and Credential, each service with
+its own PostgreSQL, and Session's `CreateApplicant` sent to the broker as
+Session sends it. It checks each service's database after four sagas:
+
+- one that completes;
+- one that University Record refuses, after which Credential's slice is gone;
+- one whose University Record is down past the retries, compensated once it is
+  back, its own step first;
+- one whose Credential database is down for 8 seconds, which still completes.
+
+It then checks that every service keeps the same applicants. University Record
+is a stand-in unless `--records-image` names the real one; the refusal is only
+checked with the stand-in.
+
 ### Cache
 
 The Gateway caches in Valkey the answers to GET requests and the tokens it has
