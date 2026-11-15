@@ -125,8 +125,10 @@ flowchart LR
 Only Gateway publishes REST. Session and DM still validate Session tokens at
 their WS handshakes. Neither published WS port carries a REST route, so
 neither can be used to forge Gateway identity: Session answers `426` on a
-listener that serves upgrades alone, and the WS edge refuses anything that is
-not DM's upgrade path. Gateway negotiates their public URLs
+listener that serves upgrades alone, and Discord DMs publishes only its
+WebSocket listener, `3001`, never its REST port `3000`. (The Lab 2 WS edge
+above is gone: Discord DMs publishes that listener itself.) Gateway negotiates
+their public URLs
 using SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL. Read
 [integration status](docs/gateway-integration.md) for
 the image/client dependencies before treating this topology as a finished game.
@@ -923,7 +925,7 @@ these callers carries a circuit breaker of its own.
 | Discord DMs | Credential | `GetCredential` | gRPC 9001, through the broker | `GET /credentials/{id}` on `gateway:8001` |
 | Discord DMs | University Record | `GetRecord` | gRPC 9001, through the broker | `GET /records/*` on `gateway:8001` |
 | Gateway | Server Rules, University Record | `HttpRequest` | envelope on `POST /messages`, for the client requests it routes there | a direct call to one instance |
-| Player, Session, Gateway, Service Discovery (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
+| Player, Session, Gateway, Service Discovery, the ETL (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
 
 Most are requests with an answer; `SessionCompleted` is an event, queued by
 topic, retried, and parked as a dead letter if it never lands. `LogBatch` is an
@@ -1353,14 +1355,15 @@ check is not cached.
 `warehouse-db` is a PostgreSQL 17 database with a star schema, which Grafana
 reads. The `etl` service, in Python, loads it every 5 minutes and on
 `POST /etl/run`, which answers
-`200 {runId, startedAt, finishedAt, rows:{<table>:int}}` or `409 ETL_RUNNING`.
-Like every service, it publishes no port.
+`200 {runId, startedAt, finishedAt, rows:{<table>:int}}` (with `failed`, the
+tables not loaded and why, when a source could not be read), `409 ETL_RUNNING`
+while a run is going, or `503 WAREHOUSE_UNAVAILABLE`. Like every service, it
+publishes no port.
 
 The ETL reads each service's database on port `5433` of its usual host, the
 replicas, as the user `etl` (`pg_read_all_data`, password `ETL_DB_PASSWORD` in
 `.env`), so a load never weighs on a primary. It joins each database's network
-to do so. Until the replicated databases land, it reads today's databases on
-`5432` with each service's own user.
+to do so.
 
 Loading is incremental. For each table it reads the rows changed since the
 table's watermark minus one minute and inserts or updates them by primary key,
@@ -1373,7 +1376,7 @@ signatures), never anything that names or reaches a person, real or generated
 (names, usernames, emails, student IDs, messages, free text), and never a whole
 JSON document: the ETL takes out the fields it needs.
 
-**Every owner tells Part 4**, on the warehouse card, for each table the
+**Every owner tells Part 4**, in issue #106, for each table the
 warehouse needs: its primary key; the column that holds the time of the last
 change, or that it has none; whether rows are ever deleted; and the columns to
 copy, without the personal ones and the secrets. Incremental loading misses a
@@ -1421,7 +1424,9 @@ Warehouse* dashboard.
 ## Running the System
 
 The common `docker-compose.yml` starts Gateway, Service Discovery, the Message
-Broker, the eight domain services, their separate PostgreSQL databases and a WS-only edge.
+Broker, the eight domain services, each one's database as a three-node Patroni
+cluster behind HAProxy, the three etcd nodes they share, Loki and Promtail, and
+the data warehouse with its ETL.
 Service Discovery publishes no port. Domain REST ports and
 all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
@@ -1437,7 +1442,8 @@ counted without anyone delivering the event by hand. See
 
 ### What you need
 
-- Docker with Compose
+- Docker with Compose, and more than 4 GB of memory for Docker: the whole stack
+  is over fifty containers, and in 4 GB its databases did not stay healthy
 - OpenSSL, to generate the Player and Session signing keys
 - The published image references for Gateway, Server Rules and University
   Record that `.env.example` lists
@@ -1623,6 +1629,7 @@ runtime registers and stopped ones drop out.
 | Gateway | [`augustinploteanu/pad-gateway-service`](https://hub.docker.com/r/augustinploteanu/pad-gateway-service) |
 | Service Discovery | [`georgerabus/pad-service-discovery`](https://hub.docker.com/r/georgerabus/pad-service-discovery) |
 | Message Broker | [`georgerabus/pad-message-broker`](https://hub.docker.com/r/georgerabus/pad-message-broker) |
+| ETL | [`catalinasiminiuc/pad-etl-service`](https://hub.docker.com/r/catalinasiminiuc/pad-etl-service) |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact
