@@ -1,0 +1,29 @@
+#!/bin/sh
+# Runs once, on the node that creates the cluster, and does what the postgres
+# image did on an empty volume: the database POSTGRES_DB, owned by the service's
+# user, then every db/<service>/ script in it, as that user. Then the read-only
+# user etl, for the warehouse. A failure here fails the bootstrap, and Patroni
+# tries again from an empty data directory.
+set -eu
+: "${PGUSER:?set PGUSER to the superuser, as pad-patroni does}"
+: "${POSTGRES_DB:?set POSTGRES_DB}"
+: "${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD}"
+
+sql() {
+    psql -v ON_ERROR_STOP=1 -X -q -h /var/run/postgresql -U "$PGUSER" "$@"
+}
+
+if [ "$POSTGRES_DB" != postgres ]; then
+    sql -d postgres -v db="$POSTGRES_DB" <<'SQL'
+CREATE DATABASE :"db";
+SQL
+fi
+for script in /docker-entrypoint-initdb.d/*.sql; do
+    [ -e "$script" ] || continue
+    echo "pad-post-bootstrap: running $script"
+    sql -d "$POSTGRES_DB" -f "$script"
+done
+sql -d postgres -v password="$ETL_DB_PASSWORD" <<'SQL'
+CREATE ROLE etl LOGIN PASSWORD :'password' IN ROLE pg_read_all_data;
+ALTER ROLE etl SET default_transaction_read_only = on;
+SQL
