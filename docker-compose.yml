@@ -293,7 +293,7 @@ services:
     networks: [session, dcs]
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.1}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:5.0.0-rc.1}
     depends_on:
       session-db:
         condition: service_healthy
@@ -309,7 +309,8 @@ services:
       # No setting names another service: from 4.0.1 on, everything Session
       # calls goes through the Message Broker (Applicant and Player by message,
       # Server Rules and Moderation over gRPC), at its default address, and
-      # nothing goes through the Gateway's internal listener.
+      # nothing goes through the Gateway's internal listener. From 5.0.0 on it
+      # also follows Applicant's sagas there, on GET /sagas/{id}.
       # Every replica registers here on startup as http://$HOSTNAME:3001.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       # Where spans go: Tempo, started with the monitoring profile. Empty, trace
@@ -673,7 +674,7 @@ services:
     networks: [applicant, dcs]
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:4.0.0}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:5.0.0-rc.1}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -682,11 +683,11 @@ services:
       DB_DATABASE: applicant
       DB_USERNAME: applicant
       DB_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
-      # A new applicant's story is handed over to each target by a gRPC call
-      # through the broker, named as the target registers with Service
-      # Discovery: records is /pad.records.v1.Records/CreateApplicant (#61).
+      # A new applicant is created by a saga on the broker's POST /sagas: one
+      # step per target, in this order, named as each registers with Service
+      # Discovery, then Applicant's own.
       HANDOVER_TARGETS: credential,records
-      BROKER_GRPC_ADDRESS: broker:9001
+      BROKER_URL: http://broker:8000
       # Every replica registers here on startup as http://$HOSTNAME:80.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     deploy:
@@ -728,7 +729,7 @@ services:
     networks: [credential, dcs]
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:5.0.0-rc.1}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:5.0.0-rc.2}
     depends_on:
       credential-db:
         condition: service_healthy
@@ -738,10 +739,6 @@ services:
       DB_USERNAME: credential
       DB_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
       CREDENTIAL_ISSUER_SECRET: ${CREDENTIAL_ISSUER_SECRET:?set CREDENTIAL_ISSUER_SECRET in .env}
-      # The same hand-over, to Applicant and University Record, when
-      # Credential is the one that starts an applicant.
-      HANDOVER_TARGETS: applicant,records
-      BROKER_GRPC_ADDRESS: broker:9001
       # Every replica registers here on startup as http://$HOSTNAME:80.
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
     deploy:

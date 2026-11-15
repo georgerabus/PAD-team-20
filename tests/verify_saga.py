@@ -95,7 +95,7 @@ def step_id(saga_id, name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:5.0.0-rc.1')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:5.0.0-rc.1')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:5.0.0-rc.2')
     parser.add_argument('--broker-image', default='georgerabus/pad-message-broker:5.0.0-rc.1')
     parser.add_argument('--discovery-image', default='georgerabus/pad-service-discovery:4.0.0')
     parser.add_argument('--records-image', help='the real University Record; a stand-in when left out')
@@ -141,12 +141,11 @@ def main():
             ready(label)
         run('credential', *discovery_env, '-e', 'DB_HOST=credential-db', '-e', 'DB_DATABASE=credential',
             '-e', 'DB_USERNAME=credential', '-e', 'DB_PASSWORD=' + passwords['credential'],
-            '-e', 'CREDENTIAL_ISSUER_SECRET=' + secrets.token_hex(32), '-e', 'HANDOVER_TARGETS=',
-            '-e', 'BROKER_GRPC_ADDRESS=broker:9001', args.credential_image)
+            '-e', 'CREDENTIAL_ISSUER_SECRET=' + secrets.token_hex(32), args.credential_image)
         applicant = run('applicant', '-p', '127.0.0.1::80', *discovery_env, '-e', 'DB_HOST=applicant-db',
             '-e', 'DB_DATABASE=applicant', '-e', 'DB_USERNAME=applicant', '-e', 'DB_PASSWORD=' + passwords['applicant'],
             '-e', 'BROKER_URL=http://broker:8000', '-e', 'HANDOVER_TARGETS=credential,records',
-            '-e', 'BROKER_GRPC_ADDRESS=broker:9001', args.applicant_image)
+            args.applicant_image)
         if real_records:
             records = run('records', *discovery_env, '-e', 'SD_SERVICE_NAME=records', '-e', 'APP_ENV=production',
                 '-e', 'APP_DEBUG=false', '-e', 'APP_KEY=base64:' + base64.b64encode(secrets.token_bytes(32)).decode(),
