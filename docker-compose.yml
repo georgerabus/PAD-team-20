@@ -746,6 +746,52 @@ services:
     networks: [credential, backend]
     restart: unless-stopped
 
+  # ---- Data warehouse and ETL ----
+  # The warehouse holds what every service's database knows, as a star
+  # schema, for analysis without touching the services. The ETL loads it every
+  # 5 minutes and on POST /etl/run, reading each database's replicas on port
+  # 5433 as the read-only user `etl`. Neither publishes a port; Grafana reads
+  # the warehouse with a read-only user of its own. See README, "Warehouse and
+  # ETL", and the ETL's own README for what each table keeps.
+  warehouse-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: warehouse
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: ${WAREHOUSE_DB_PASSWORD:?set WAREHOUSE_DB_PASSWORD in .env}
+      # Read by db/warehouse/10-grafana-reader.sh on the first start, to create
+      # the user Grafana reads with.
+      WAREHOUSE_GRAFANA_PASSWORD: ${WAREHOUSE_GRAFANA_PASSWORD:?set WAREHOUSE_GRAFANA_PASSWORD in .env}
+    volumes:
+      - warehouse-db-data:/var/lib/postgresql/data
+      - ./db/warehouse:/docker-entrypoint-initdb.d:ro
+    networks: [warehouse]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warehouse -d warehouse"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  etl:
+    image: ${ETL_IMAGE:-catalinasiminiuc/pad-etl-service:5.0.0-rc.1}
+    depends_on:
+      warehouse-db:
+        condition: service_healthy
+    environment:
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      WAREHOUSE_DB_PASSWORD: ${WAREHOUSE_DB_PASSWORD:?set WAREHOUSE_DB_PASSWORD in .env}
+      ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
+      # Registered like every service, so Service Discovery health-checks it.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8000
+    # Every service database's network, to reach its replicas under the same
+    # host name the service uses; the warehouse's; and backend, for Service
+    # Discovery and the broker's `logs` topic.
+    networks: [warehouse, backend, player, session, moderation, dm, applicant, credential,
+               server-rules, university-record]
+    restart: unless-stopped
+
   # ---- Monitoring ----
   # Behind the `monitoring` profile, so `docker compose up` starts the system
   # as it always has and nobody pays for four more containers they did not
@@ -842,6 +888,8 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # The warehouse data source reads it from here; Grafana's user is read-only.
+      WAREHOUSE_GRAFANA_PASSWORD: ${WAREHOUSE_GRAFANA_PASSWORD:-}
     volumes:
       # The two subdirectories, not the whole provisioning folder: mounting
       # over it would hide the empty `alerting` and `plugins` directories the
@@ -855,7 +903,8 @@ services:
       # it is the port most likely to be taken on a developer's machine.
       - "127.0.0.1:${GRAFANA_PORT:-3300}:3000"
     depends_on: [prometheus, loki, tempo]
-    networks: [backend]
+    # backend for Prometheus, Loki and Tempo; warehouse for the warehouse.
+    networks: [backend, warehouse]
     restart: unless-stopped
 
 # One private network per service for its database, and a shared one the
@@ -871,6 +920,7 @@ networks:
   dm:
   moderation:
   dcs:
+  warehouse:
 
 volumes:
   broker-data:
@@ -906,3 +956,4 @@ volumes:
   promtail-data:
   grafana-data:
   tempo-data:
+  warehouse-db-data:

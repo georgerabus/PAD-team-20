@@ -1,5 +1,5 @@
-# All three data sources, created when Grafana starts rather than clicked
-# together afterwards: the dashboard is in this repository and has to find
+# All four data sources, created when Grafana starts rather than clicked
+# together afterwards: the dashboards are in this repository and have to find
 # them by a fixed uid on any machine that runs the stack.
 apiVersion: 1
 
@@ -56,3 +56,20 @@ datasources:
         enabled: true
       lokiSearch:
         datasourceUid: pad-loki
+
+  # The data warehouse the ETL loads: what the system did, as a star schema.
+  # Read with grafana_reader, which may select and nothing else. (`$$` is not
+  # needed here: `${...}` is meant to be expanded, from Grafana's environment.)
+  - name: Warehouse
+    type: grafana-postgresql-datasource
+    uid: pad-warehouse
+    access: proxy
+    url: warehouse-db:5432
+    user: grafana_reader
+    jsonData:
+      database: warehouse
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+    secureJsonData:
+      password: ${WAREHOUSE_GRAFANA_PASSWORD}

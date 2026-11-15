@@ -1376,6 +1376,43 @@ table without such a column and every deleted row (the saga's compensations
 delete from Credential and University Record), so such a table is loaded whole
 on every run, or left out.
 
+#### What the warehouse holds
+
+The ETL is its own service, [pad-etl-service](pad-etl-service/), image
+`catalinasiminiuc/pad-etl-service` (`ETL_IMAGE`); its README has every table
+with what it keeps and why. In short:
+
+| Facts | Dimensions |
+|---|---|
+| `fact_shift`, `fact_shift_player` (Session) | `dim_player`, `dim_team`, `bridge_team_member` (Player) |
+| `fact_decision` (Moderation) | `dim_channel` (Discord DMs) |
+| `fact_message` (Discord DMs, never the text) | `dim_rule_set` (Server Rules) |
+| `fact_applicant` (Applicant), `fact_credential` (Credential), `fact_applicant_record` (University Record) | `dim_date` |
+
+No table in the system had a column for the time of its last change except the
+Laravel services' `updated_at`, so Moderation's decisions and Discord DMs'
+channels and messages load by the time they were written (rows only ever
+added), Applicant and Server Rules by `updated_at`, and the rest — players,
+teams, shifts, and Credential and University Record, which the saga's
+compensations delete from — whole on every run. `etl_runs` records every run:
+what started it, how it went, rows per table, the watermarks, and what could
+not be read.
+
+Nothing personal or secret is copied: no username, email, password hash, name,
+student ID, document contents, signature, message text, or whole JSON
+document. The ETL's tests check it on every build, against sample databases
+whose every personal value is marked.
+
+Run a load now, from inside the network:
+
+```bash
+docker compose exec etl python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/etl/run', method='POST')).read().decode())"
+```
+
+Grafana reads the warehouse as `grafana_reader`, created when `warehouse-db`
+first starts and allowed to read and nothing else: the *PAD Team 20 —
+Warehouse* dashboard.
+
 ## Running the System
 
 The common `docker-compose.yml` starts Gateway, Service Discovery, the Message
@@ -1610,8 +1647,8 @@ docker compose --profile monitoring up -d
 ```
 
 Grafana is then at **http://localhost:3300**, opening on *PAD Team 20 —
-System Overview*, with the *PAD Team 20 — Logs* dashboard beside it and all
-three data sources connected. There is no login: it is a page of counts and container names on a
+System Overview*, with the *PAD Team 20 — Logs* and *PAD Team 20 — Warehouse*
+dashboards beside it and all four data sources connected. There is no login: it is a page of counts and container names on a
 developer's own machine, and the port is bound to the loopback address.
 
 Stop them again without touching the system:
@@ -1716,6 +1753,13 @@ impostor. Details in [docs/logging-and-tracing.md](docs/logging-and-tracing.md).
 one request across every service by the trace id pasted into its box, every
 error with its stack, and the full collection filtered by service and level.
 
+*PAD Team 20 — Warehouse* is what the system did, read from the data
+warehouse: decisions per day and how they turned out, moderators' accuracy by
+what the applicant claimed to be, impostors caught or let in and which
+deceptions work, claimed status against the university's record, shift
+scores, players by level, the documents applicants carry, messages per
+channel, and every ETL run.
+
 Under a load test driving Player past its limit, the dashboard shows both
 replicas at 98% and 100% of their own limits, two instances flagged as
 critically loaded, and the Gateway's status mix shifting to mostly `429`
@@ -1729,8 +1773,11 @@ with `408` and `503` appearing behind it.
 | `LOGS_TOKEN` | *(empty)* | The operator token for the Gateway's `GET /logs`. Empty, the download refuses every request |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4318` in `.env.example` | Where the services send spans. Empty, trace ids are still made and logged; only the export is off |
 | `METRICS_EXTRA_INSTANCES` | `gateway=http://gateway:8000` | Instances watched for metrics without registering |
+| `WAREHOUSE_DB_PASSWORD` | *(required)* | The warehouse's owner, which the ETL writes with |
+| `WAREHOUSE_GRAFANA_PASSWORD` | *(required)* | `grafana_reader`, which the Warehouse data source reads with |
+| `ETL_INTERVAL_SECONDS` | `300` | How often the ETL loads the warehouse |
 
-Both dashboards, the three data sources, and the Prometheus, Loki, Promtail
+The three dashboards, the four data sources, and the Prometheus, Loki, Promtail
 and Tempo configuration all live in [monitoring/](monitoring/) and are provisioned on
 startup. Edits made in the Grafana UI are not written back: change the JSON
 there, or export from Grafana and replace the file.

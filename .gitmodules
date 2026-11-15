@@ -31,3 +31,6 @@
 [submodule "pad-message-broker"]
 	path = pad-message-broker
 	url = https://github.com/georgerabus/pad-message-broker
+[submodule "pad-etl-service"]
+	path = pad-etl-service
+	url = https://github.com/catalinacs/pad-etl-service
