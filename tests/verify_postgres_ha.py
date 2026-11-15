@@ -5,7 +5,8 @@ with temporary passwords, and checks what the CPR README promises under
 "Replicated databases": one primary and two replicas per cluster, the service's
 user and database on port 5432, the db/<service>/ script run once, the read-only
 user etl on port 5433, a failover that keeps every confirmed write, the old
-primary back as a replica, and a primary that carries on with both replicas down.
+primary back as a replica, a primary that carries on with both replicas down,
+and one that stays primary while etcd is down.
 Does not read the project's .env or touch an existing deployment.
 """
 
@@ -46,7 +47,7 @@ def wait_for(predicate, label, seconds=180):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--image', default='georgerabus/pad-postgres-ha:1.0.0')
+    parser.add_argument('--image', default='georgerabus/pad-postgres-ha:1.0.1')
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix='pad-postgres-ha-') as folder:
@@ -149,6 +150,17 @@ def main():
             wait_for(lambda: healthy('applicant-db', survivor), 'both replicas streaming again', 120)
             check('both replicas are back and in sync', sql('applicant-db', 'select count(*) from ha_check', port=5433,
                   database='applicant', **etl), '102')
+
+            # With etcd gone, the primary still reaches both replicas, so it
+            # stays primary (failsafe mode) well past the 20 s ttl.
+            primary = leader('applicant-db', survivor)
+            compose('stop', 'etcd-1', 'etcd-2', 'etcd-3')
+            time.sleep(30)
+            check('with every etcd node stopped for 30 s, the primary still commits',
+                  sql('applicant-db', 'insert into ha_check values (103)', timeout=30), 'INSERT 0 1')
+            compose('start', 'etcd-1', 'etcd-2', 'etcd-3')
+            wait_for(lambda: healthy('applicant-db', survivor), 'the cluster back on etcd', 120)
+            check('and it is still the same primary', leader('applicant-db', survivor), primary)
 
             stats = subprocess.run(['docker', 'stats', '--no-stream', '--format', '{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}',
                                     *json_names(compose('ps', '--format', 'json'))], text=True, capture_output=True).stdout

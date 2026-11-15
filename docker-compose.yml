@@ -26,7 +26,7 @@ name: pad-team-20
 # uses belongs to an HAProxy in front of its cluster. See docker/postgres-ha/
 # and the CPR README, "Replicated databases".
 x-postgres-ha-node: &postgres-ha-node
-  image: ${POSTGRES_HA_IMAGE:-georgerabus/pad-postgres-ha:1.0.0}
+  image: ${POSTGRES_HA_IMAGE:-georgerabus/pad-postgres-ha:1.0.1}
   depends_on: [etcd-1, etcd-2, etcd-3]
   healthcheck:
     test: [CMD, pg_isready, -h, 127.0.0.1, -p, "5432"]
@@ -38,7 +38,7 @@ x-postgres-ha-node: &postgres-ha-node
   restart: unless-stopped
 
 x-postgres-ha-proxy: &postgres-ha-proxy
-  image: ${POSTGRES_HA_IMAGE:-georgerabus/pad-postgres-ha:1.0.0}
+  image: ${POSTGRES_HA_IMAGE:-georgerabus/pad-postgres-ha:1.0.1}
   entrypoint: [haproxy, -db, -f, /etc/haproxy/pad.cfg]
   # Healthy once the primary answers through it, in the service's database.
   healthcheck:
@@ -170,7 +170,7 @@ services:
   # registers itself with Service Discovery and retries until it answers, so
   # it needs no start order.
   broker:
-    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:4.0.0}
+    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:5.0.0-rc.1}
     environment:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
@@ -728,7 +728,7 @@ services:
     networks: [credential, dcs]
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:4.0.0}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:5.0.0-rc.1}
     depends_on:
       credential-db:
         condition: service_healthy

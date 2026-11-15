@@ -1002,7 +1002,10 @@ Compose:
   copy the primary with `pg_basebackup` and stream from it.
 - **Settings**, in `patroni.yml`: `ttl` 20, `loop_wait` 5, `retry_timeout` 5,
   `synchronous_mode`, `use_pg_rewind`, so an old primary comes back as a
-  replica on its own. HAProxy asks each node's `GET /primary` or
+  replica on its own, and `failsafe_mode`: while etcd does not answer, a
+  primary that still reaches both replicas stays primary. Without it, one
+  slow moment of etcd's disk made every primary step down at once, and
+  requests failed until they came back. HAProxy asks each node's `GET /primary` or
   `GET /replica` on port 8008 every 2 seconds, marks it down after 2 failures,
   and then closes the connections still open to it.
 - **Upgrading from Lab 4.** The single databases' volumes (`<service>-db-data`)
@@ -1033,7 +1036,8 @@ a disposable project. It checks everything above: the roles, the service's
 user and database on `5432`, the `db/player/` script run once, `etl` on
 `5433` and unable to write, and a primary killed with every confirmed write
 kept. It also checks that the old primary comes back as a replica and that a
-primary goes on committing with both replicas down. On a laptop both
+primary goes on committing with both replicas down, and that a primary stays
+primary with all three etcd nodes stopped. On a laptop both
 clusters were up 27 s after `docker compose up`, and the new primary took over
 19 to 24 s after the old one was killed. Idle, a node takes about 70 MB, an
 etcd node about 40 MB, and an HAProxy about 15 MB, plus the `psql` its

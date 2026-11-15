@@ -19,6 +19,11 @@ bootstrap:
     # A commit returns once one replica has it too, and only that replica may
     # be promoted. With both replicas down the primary carries on alone.
     synchronous_mode: true
+    # If etcd stops answering, as it can while the disk is busy, a primary
+    # that still reaches every other member over its REST API stays primary,
+    # and those members do not race for its lock. Without it every primary
+    # steps down until etcd is back. If any member is unreachable, it still does.
+    failsafe_mode: true
     postgresql:
       use_pg_rewind: true
       use_slots: true
