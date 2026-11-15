@@ -2,7 +2,7 @@
 
 Uses temporary credentials, signing keys, volumes and loopback ports. Does not
 read the project's .env or alter an existing Compose deployment. Failures in
-rules/records, Session's outgoing calls or the applicant hand-over remain failures;
+rules/records, Session's outgoing calls or the applicant saga remain failures;
 successful container startup alone is not a complete integration result.
 """
 
@@ -175,10 +175,10 @@ def main():
     parser.add_argument('--service-discovery-image')
     parser.add_argument('--broker-image')
     parser.add_argument('--postgres-ha-image')
-    parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
-    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.1.0')
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:4.0.0')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:5.0.0-rc.1')
+    parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:4.0.0')
+    parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:5.0.0-rc.1')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:5.0.0-rc.1')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:5.0.0-rc.2')
     parser.add_argument('--dm-image', default='augustinploteanu/pad-dm-service:4.5.0')
     parser.add_argument('--moderation-image', default='augustinploteanu/pad-moderation-service:4.5.0')
     parser.add_argument('--report', type=Path)
@@ -481,15 +481,21 @@ def main():
                 print('--- End DM WebSocket diagnostics ---', flush=True)
 
             status, applicant = internal('/applicant/applicants', 'POST', {'sessionId': session_id})
-            check('internal Gateway creates a real Applicant', status, 201)
+            check('internal Gateway creates a real Applicant', status in (201, 202), True)
             applicant_id = applicant['applicantId']
+            # 202: the saga is still running. Applicant's own slice is its last
+            # step, so once Applicant has the applicant, the saga has completed.
+            if status == 202:
+                wait_until = time.monotonic() + 60
+                while internal(f'/applicant/applicants/{applicant_id}')[0] != 200 and time.monotonic() < wait_until:
+                    time.sleep(1)
             check('moderator reads the real Applicant through Gateway',
                   call(public + f'/applicant/applicants/{applicant_id}/public', headers=session_auth)[0], 200)
             check('junior reads the real Applicant through Gateway',
                   call(public + f'/applicant/applicants/{applicant_id}/public', headers=junior_session_auth)[0], 200)
             check('public Gateway refuses the full internal Applicant view',
                   call(public + f'/applicant/applicants/{applicant_id}', headers=session_auth)[0], 403)
-            # Applicant hands the story over before it answers, so the others have it already.
+            # The saga keeps the story in Credential and University Record before Applicant.
             check('a new Applicant reaches Credential',
                   internal(f'/credential/applicants/{applicant_id}/credentials/validate', 'POST')[0], 200)
             check('a new Applicant reaches University Record',
@@ -497,15 +503,15 @@ def main():
                       'X-Player-Id': junior['playerId'], 'X-Session-Id': session_id,
                       'X-Session-Role': 'junior_mod', 'X-Record-Access': 'enrollment'})[0], 200)
 
-            # A story of one known document, handed over the way another service
-            # would, for the sharing checks below. Separate from the checks above.
+            # A story of one known document, posted the way the saga's step
+            # delivers it, for the sharing checks below. Separate from the checks above.
             fixture_id = str(uuid.uuid4())
             story = {'applicantId': fixture_id, 'sessionId': session_id,
                 'documents': [{'type': 'student_id', 'status': 'valid', 'fields': {
                     'studentId': 'FAF230042', 'fullName': 'Ana Rusu', 'faculty': 'FCIM', 'major': 'FAF',
                     'year': 3, 'issuedAt': '2023-09-01', 'expiresAt': '2099-06-30',
                 }}]}
-            check('Credential stores a story from another service',
+            check('Credential stores a story as the saga step does',
                   internal('/credential/applicants', 'POST', story)[0], 201)
             status, documents = call(public + f'/credential/applicants/{fixture_id}/credentials', headers=session_auth)
             check('moderator reads Credential fixture through Gateway', status, 200)
@@ -560,14 +566,23 @@ def main():
                   call(public + '/records/records/academic-year', headers=session_auth)[0], 200)
             status, next_applicant = call(public + f'/session/sessions/{session_id}/next-applicant', 'POST', headers=session_auth)
             check('Session requests the next Applicant', status, 202)
-            if status == 202:
+            door = next_applicant.get('applicantId') if status == 202 else None
+            # null: the saga is still running, and Session puts the applicant at
+            # the door once it completes, within 60 seconds.
+            wait_until = time.monotonic() + 65
+            while status == 202 and door is None and time.monotonic() < wait_until:
+                time.sleep(1)
+                current_status, current = call(public + f'/session/sessions/{session_id}/current-applicant', headers=session_auth)
+                door = current.get('applicantId') if current_status == 200 else None
+            check('Session puts the next Applicant at the door', door is not None, True)
+            if door is not None:
                 check('Session next-applicant exists in real Applicant service',
-                      internal('/applicant/applicants/' + next_applicant['applicantId'])[0], 200)
+                      internal('/applicant/applicants/' + door)[0], 200)
                 # Moderation reads the claim, has the documents checked and asks Server
                 # Rules for the session's rule set: every step is a call through Gateway.
                 check('Moderation records a decision on that Applicant',
                       call(public + '/moderation/decisions', 'POST', {
-                          'sessionId': session_id, 'applicantId': next_applicant['applicantId'],
+                          'sessionId': session_id, 'applicantId': door,
                           'moderatorId': moderator['playerId'], 'action': 'accept'}, session_auth)[0], 201)
 
             # Ending the shift makes Session send SessionCompleted to Player

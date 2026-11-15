@@ -148,9 +148,11 @@ listener in Lab 2. The domain responsibilities remain independent:
   Applicant, has Credential check the documents, asks Server Rules for the
   correct verdict under the session's current rule set, and reports the outcome
   to Session.
-- **Applicant, Credential and University Record** form a ring with no owner:
-  whichever is contacted first creates the applicant and hands its story to the
-  other two, which is why every pair has an arrow in both directions.
+- **Applicant, Credential and University Record** each keep a slice of every
+  applicant. In this design whichever was contacted first created the applicant
+  and handed its story to the other two, hence an arrow in both directions
+  between every pair. Since Lab 5 only Applicant creates one, by a saga on the
+  broker: see [Creating an applicant across three databases](#creating-an-applicant-across-three-databases).
 - **Discord DMs** checks channel access with Session, and fetches a document
   from Credential or a record from University Record when a player shares one
   into a channel.
@@ -368,27 +370,23 @@ applies twice.
 ### Data management and the applicant bootstrap
 
 Each service keeps its own database and nothing is shared. The one flow that
-spans services is creating an applicant, and **no service is in charge of it**.
-Applicant, Credential and University Record each expose the same
-`POST /applicants`, and it has two uses. Called with `{sessionId}`, the service
-was contacted first: it generates the whole coherent story, hands it to the
-other two on that same endpoint, through the Gateway's internal port, and keeps
-its own slice. Called with a story, it keeps its slice and passes nothing on.
-None of the three is a required entry point: Session calls Applicant today, and
-would get the same kind of applicant from either of the others.
-
-The hand-over finishes before the first call answers, so the other two already
-have the applicant when the caller receives its `applicantId`. If one of them
-does not accept the story, the call answers `502 PEER_UNAVAILABLE` and the
-service keeps nothing, so the caller can ask again. A service that already has
-the `applicantId` leaves it as it is and answers `200`.
-
-Lab 5 replaces this hand-over with a saga: see
+spans services is creating an applicant. Applicant, Credential and University
+Record each keep a slice of the same story, and **only Applicant creates one**.
+Session asks it with `CreateApplicant {sessionId}`. Applicant generates the
+whole coherent story and starts a saga on the broker, which keeps the story in
+Credential, then in University Record, then in Applicant itself: see
 [Creating an applicant across three databases](#creating-an-applicant-across-three-databases).
+Credential and University Record receive a story only as a step of that saga,
+and generate none. A service that already has the `applicantId` leaves it as it
+is and answers `200`.
 
-All three are Laravel and generate with the same `StoryGenerator` class, copied
-unchanged into each service, so a story looks the same whichever service starts
-it.
+An applicant is ready once its saga has completed, when every slice is kept.
+Session calls it to the door only then (see
+[Server Moderation Session Service](#server-moderation-session-service)).
+
+Until Lab 4, any of the three could be contacted first: it generated the story
+with its copy of the same `StoryGenerator` and handed it to the other two, one
+call at a time. Since Lab 5, only Applicant generates one.
 
 The story has four parts: what the applicant *presents* at the door (which may
 be false), the *ground truth* in the records, the *documents* they hand over,
@@ -399,7 +397,7 @@ and the *deception* metadata linking them.
 {
   "applicantId": "UUID",
   "sessionId": "UUID",
-  "origin": "enum(applicant|credential|university_record)",  // contacted first
+  "origin": "applicant",               // the service that generated it
   "presented": {                       // Applicant keeps
     "name": "string", "studentId": "string", "major": "string", "year": "int",
     "role": "enum(student|other_major|ta|staff|alumni|outsider)",
@@ -481,7 +479,7 @@ roster needs.
 | `POST /sessions/{id}/roles` `[REST]` | `{assignments:[RoleAssignment]}` | `200` |
 | `POST /sessions/{id}/start` `[REST]` | — | `200 {status:"active", startedAt, ruleSetVersion}` *(calls Server Rules)* |
 | `POST /sessions/{id}/token` `[REST]` | — | `200 {sessionToken}` *(current role and recordAccess)* |
-| `POST /sessions/{id}/next-applicant` `[REST]` | — | `202 {applicantId}` *(calls Applicant)* |
+| `POST /sessions/{id}/next-applicant` `[REST]` | — | `202 {applicantId}` *(calls Applicant; `null` while the applicant is on the way)* \| `502 UPSTREAM_UNAVAILABLE` |
 | `GET /sessions/{id}/current-applicant` `[REST]` | — | `200 {applicantId}` |
 | `POST /sessions/{id}/outcomes` `[REST]` | `{decisionId, applicantId, correct, penalty}` *(internal, Moderation)* | `200` |
 | `POST /sessions/{id}/end` `[REST]` | — | `200 SessionResult` *(reads the decision log from Moderation, sends SessionCompleted to Player)* |
@@ -518,14 +516,52 @@ roster needs.
 
 `WS /sessions/{id}/live` pushes: `{type:"shift_started", ruleSetVersion}` (the
 client then calls `POST /sessions/{id}/token` to pick up its `recordAccess`),
-`{type:"applicant_changed", applicantId}`, `{type:"score_updated", score,
-penalties}`, `{type:"shift_ended", result}`.
+`{type:"applicant_changed", applicantId}`, `{type:"applicant_unavailable"}`
+(see below), `{type:"score_updated", score, penalties}`,
+`{type:"shift_ended", result}`.
 
 On `start`, Session asks Server Rules for the shift's rule set, passing the
 moderator's level so later shifts get harder. On each outcome from Moderation it
 updates score / penalties / `applicationsProcessed` and advances the current
 applicant. On `end` it reads the decision log from Moderation, so the final
 result comes from the authoritative record, not from its running counters.
+
+**Calling the next applicant.** `next-applicant` sends Applicant
+`CreateApplicant {sessionId}` through the broker, with a `deadline` 1 second
+before the request's own limit (`REQUEST_TIMEOUT_MS`, 5 seconds by default). It
+waits for the answer until 0.5 seconds before that limit. Applicant keeps 2.5
+seconds of a deadline for itself, so it waits for its saga at most 1.5 seconds,
+enough for a saga that meets no failure. The door, meaning `currentApplicantId`
+and the `applicant_changed` push, only ever shows an applicant whose saga has
+completed. No player sees one that a compensation may still remove.
+
+| Applicant answers | Session answers | The door |
+|---|---|---|
+| `201 {applicantId}` | `202 {applicantId}` | changes now |
+| `202 {applicantId, statusPath}` | `202 {applicantId: null}`: one is on the way | changes once the saga completes |
+| anything else, or nothing in time | `502 UPSTREAM_UNAVAILABLE` | stays as it was |
+
+After a `202`, Session follows the saga in the background. It reads
+`GET http://broker:8000<statusPath>` about once a second:
+
+- `completed`: the applicant goes to the door, with `applicant_changed`.
+- `compensated`, `failed` or `404`: nothing usable was kept. Session asks
+  Applicant again with a new `messageId`, as above, and handles that answer
+  the same way.
+- `running`, `compensating`, or no answer: it reads again. The saga ends by
+  itself.
+
+An applicant goes to the door only if the door still holds what it held when
+its call started, or nobody. Session checks this in one conditional `UPDATE`.
+A call that completes after a newer one has filled the door changes nothing.
+An applicant still on the way may fill a door that an outcome has emptied.
+
+Session stops following when the shift ends, and 60 seconds after the
+moderator's request. If no applicant has reached the door by then, it pushes
+`{type:"applicant_unavailable"}`, and the moderator can ask again. The
+following is kept in memory, for example lost when Session restarts. So a
+client that hears neither push within 60 seconds of a `202 {applicantId: null}`
+treats it as `applicant_unavailable`.
 
 **How the numbers are reached.** `penalties` is the sum of the `penalty` values
 Moderation reported, and `score` is 10 points per correct decision minus the
@@ -546,8 +582,8 @@ whole shift while a token only lives 15 minutes.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, hands it to Credential and University Record)* \| `502` |
-| `POST /applicants` `[REST]` | `ApplicantStory` *(internal, Credential or University Record)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
+| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session, through the broker)* | `201 {applicantId}` *(the saga completed)* \| `202 {applicantId, statusPath}` *(not yet)* \| `502 PEER_UNAVAILABLE` \| `500 HANDOVER_FAILED` |
+| `POST /applicants` `[REST]` | `ApplicantStory` *(the saga's last step, through the broker)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
 | `GET /applicants/{id}` `[REST]` | *(internal, Moderation — includes impostor flag)* | `200 Applicant` |
 | `GET /applicants/{id}/public` `[REST]` | — *(session token of the applicant's session, any role)* | `200 ApplicantPublic` *(what the moderator sees)* \| `401` \| `403` \| `404` |
 | `GET /applicants?sessionId=` `[REST]` | — *(session token of that session)* | `200 [ApplicantPublic]` \| `401` \| `403` |
@@ -564,8 +600,9 @@ whole shift while a token only lives 15 minutes.
 { "...ApplicantPublic":"...", "isImpostor":"bool", "strategy":"string" }
 ```
 
-**Sends** `ApplicantStory` to the other two when contacted first.
-**Receives** it from them → keep the `presented` and `deception` slice.
+**Starts** the saga that creates every applicant, on the broker's `POST /sagas`.
+**Receives** the story as the saga's last step → keep the `presented` and
+`deception` slice.
 
 ### Credential Service
 
@@ -589,14 +626,14 @@ missing or malformed), then enforces:
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` *(internal, Session)* | `201 {applicantId}` *(generates the story, hands it to Applicant and University Record)* \| `502` |
-| `POST /applicants` `[REST]` | `ApplicantStory` *(internal, Applicant or University Record)* | `201 {applicantId}` *(keeps the documents)* \| `200` *(already had it)* |
+| `POST /applicants` `[REST]` | `ApplicantStory` *(the saga's first step, through the broker)* | `201 {applicantId}` *(keeps the documents)* \| `200` *(already had it)* \| `422` *(no story, such as `{sessionId}` alone)* |
 | `GET /applicants/{id}/credentials` `[REST]` | — *(session token, moderator)* | `200 [Credential]` \| `401` \| `403` \| `404` |
 | `GET /credentials/{id}` `[REST]` | — *(session token, moderator)* | `200 Credential` \| `401` \| `403` \| `404 CREDENTIAL_NOT_FOUND` |
 | `POST /applicants/{id}/credentials/validate` `[REST]` | — *(internal, Moderation)* | `200 CredentialValidation` \| `404` |
 
-An applicant is readable here as soon as the call that created it has answered:
-the story is handed over before it does.
+An applicant at the door is always readable here. Credential's step is the
+saga's first, and Session calls an applicant to the door only once its saga
+has completed.
 
 **Document fields.** `fields` depends on `type`. Unmarked fields are strings,
 and every listed field is required: a document missing one is `incomplete` by
@@ -661,8 +698,8 @@ every document is sound. Validation reads nothing outside Credential (not the
 claim, not the records), so a genuine document carried by the wrong person
 passes. That case is left to the players.
 
-**Sends** `ApplicantStory` to the other two when contacted first.
-**Receives** it from them → keep the `documents` slice as above.
+**Receives** the story as the saga's first step → keep the `documents` slice
+as above. `DeleteApplicant` undoes it.
 
 ### Server Rules Service
 
@@ -725,8 +762,7 @@ shares a record into a channel, made with that player's token.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `{sessionId}` *(internal)* | `201 {applicantId}` *(generates the story, hands it to Applicant and Credential)* \| `502` |
-| `POST /applicants` `[REST]` | `ApplicantStory` *(internal, Applicant or Credential)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
+| `POST /applicants` `[REST]` | `ApplicantStory` *(the saga's second step, through the broker)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
 | `GET /records/enrollment?applicantId=` `[REST]` | — | `200 {enrolled, studentId, major, year, status}` \| `403` |
 | `GET /records/emails?applicantId=` `[REST]` | — | `200 {email, inGroupList}` \| `403` |
 | `GET /records/courses` `[REST]` | *(global, gated by `courses` assignment)* | `200 {courses:[string]}` \| `403` |
@@ -734,8 +770,8 @@ shares a record into a channel, made with that player's token.
 | `GET /records/schedule?applicantId=` `[REST]` | — | `200 {entries:[{course, day, time}]}` \| `403` |
 | `GET /records/fcim-messages?applicantId=` `[REST]` | — | `200 {messages:[{author, text, ts}]}` \| `403` |
 
-**Sends** `ApplicantStory` to the other two when contacted first.
-**Receives** it from them → keep the `groundTruth` slice.
+**Receives** the story as the saga's second step → keep the `groundTruth`
+slice. `DeleteApplicant` undoes it.
 
 ### Moderation Service
 
@@ -873,7 +909,9 @@ these callers carries a circuit breaker of its own.
 | Session | Server Rules | `CreateRuleSet` | gRPC 9001, through the broker | `POST /rules` on `gateway:8001` |
 | Session | Moderation | `ListSessionDecisions` | gRPC 9001, through the broker | `GET /sessions/{id}/decisions` on `gateway:8001` |
 | Session | Player | `SessionCompleted` | event on topic `session.completed` | `POST /internal/events/session-completed` |
-| Applicant, Credential | Each other and University Record | `CreateApplicant` | gRPC 9001, through the broker, to every service in `HANDOVER_TARGETS` | `POST /applicants` on `gateway:8001` |
+| Applicant | Message Broker | `POST /sagas`: the saga that creates an applicant | HTTP on `broker:8000` | `CreateApplicant` over gRPC to every service in `HANDOVER_TARGETS` (Lab 4) |
+| The broker's saga coordinator | Credential, University Record, Applicant | `CreateApplicant`, `DeleteApplicant` | envelope on each one's `POST /broker/deliver` | the same Lab 4 hand-over |
+| Session | Message Broker | `GET /sagas/{id}`, after Applicant's `202` | HTTP on `broker:8000` | nothing: new in Lab 5 |
 | Moderation | Applicant | `GetApplicant` | gRPC 9001, through the broker | `GET /applicants/{id}` on `gateway:8001` |
 | Moderation | Credential | `ValidateCredentials` | gRPC 9001, through the broker | `POST /applicants/{id}/credentials/validate` on `gateway:8001` |
 | Moderation | Server Rules | `GetCurrentRuleSet`, `Evaluate` | gRPC 9001, through the broker | `GET /rules/current`, `POST /rules/evaluate` on `gateway:8001` |
@@ -1047,11 +1085,12 @@ healthcheck runs.
 
 Creating an applicant is the only change that spans databases: Applicant,
 Credential and University Record each keep a slice of the same story (see
-[Data management](#data-management-and-the-applicant-bootstrap)). The hand-over
-described there is not atomic: if University Record refuses the story after
-Credential has kept its slice, Credential keeps it and nobody removes it. Lab 5
-replaces the hand-over with a saga, coordinated by the broker, which already
-reaches every instance and keeps its state in `/data`. We chose a saga over a
+[Data management](#data-management-and-the-applicant-bootstrap)). Until Lab 4,
+the service contacted first handed the story to the other two one call at a
+time, which was not atomic. If University Record refused the story after
+Credential had kept its slice, Credential kept it and nobody removed it. Since
+Lab 5, an applicant is created by a saga, coordinated by the broker, which
+already reaches every instance and keeps its state in `/data`. We chose a saga over a
 two-phase commit; [the difference](#a-saga-and-not-a-two-phase-commit) is
 below.
 
@@ -1077,6 +1116,9 @@ is ready everywhere; `compensated`, `failed` or `404`, nothing was kept, so it
 asks for another applicant. A `404` only happens when Applicant could not reach
 the broker and the broker never recorded the creation. Session sending the
 same message again gets the same `202`, as replies are stored per `messageId`.
+What the players see meanwhile is in
+[Calling the next applicant](#server-moderation-session-service): the door only
+shows an applicant once its saga has completed.
 
 **How the coordinator calls a participant.** As an envelope on the
 participant's `POST /broker/deliver`, with the same instance selection, reroute
@@ -1343,10 +1385,10 @@ all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
 `/records`, `/moderation`, `/dm`.
 
-**Every new applicant reaches University Record.** Applicant and Credential
-hand its story to University Record as well, as a gRPC `CreateApplicant` call
-through the broker, so a junior with enrollment access can read the
-applicant's enrollment as soon as the applicant exists. `SessionCompleted` is
+**Every new applicant reaches University Record.** The saga Applicant starts
+keeps the story in Credential and University Record before Applicant itself,
+so a junior with enrollment access can read the applicant's enrollment as soon
+as the applicant is at the door. `SessionCompleted` is
 connected too: Session sends it to Player when a shift ends, and the shift is
 counted without anyone delivering the event by hand. See
 [integration status and verification](docs/gateway-integration.md).
@@ -1518,7 +1560,7 @@ evidence for this deployment.
 The test starts its own fresh Compose project and removes only its temporary
 resources. It hands Credential one known document for the sharing checks and
 separately checks that a new applicant reaches Credential and University
-Record, so a missing hand-over remains a failure. It runs two replicas of each
+Record, so a saga step that did not run remains a failure. It runs two replicas of each
 registered service and checks that every replica is listed in Service Discovery
 and answers its `/status`, that a socket on one Discord DMs replica sees
 presence and messages from the other, and that a Moderation replica added at
