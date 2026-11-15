@@ -228,7 +228,7 @@ services:
     networks: [player, dcs]
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:5.0.0-rc.1}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:5.0.0-rc.2}
     depends_on:
       player-db:
         condition: service_healthy
@@ -293,7 +293,7 @@ services:
     networks: [session, dcs]
 
   session:
-    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:5.0.0-rc.1}
+    image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:5.0.0-rc.2}
     depends_on:
       session-db:
         condition: service_healthy
