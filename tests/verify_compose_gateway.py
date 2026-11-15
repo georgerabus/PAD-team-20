@@ -174,6 +174,7 @@ def main():
     parser.add_argument('--records-image', required=True)
     parser.add_argument('--service-discovery-image')
     parser.add_argument('--broker-image')
+    parser.add_argument('--postgres-ha-image')
     parser.add_argument('--player-image', default='catalinasiminiuc/pad-player-service:3.0.0')
     parser.add_argument('--session-image', default='catalinasiminiuc/pad-server-moderation-session-service:3.1.0')
     parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:4.0.0')
@@ -226,6 +227,7 @@ def main():
             **({'SERVICE_DISCOVERY_IMAGE': args.service_discovery_image}
                if args.service_discovery_image else {}),
             **({'BROKER_IMAGE': args.broker_image} if args.broker_image else {}),
+            **({'POSTGRES_HA_IMAGE': args.postgres_ha_image} if args.postgres_ha_image else {}),
             'DM_IMAGE': args.dm_image, 'MODERATION_IMAGE': args.moderation_image,
             'GATEWAY_HTTP_PORT': str(ports[0]),
             'DM_WS_PORT': str(dm_ports[0]), 'DM_WS_PORT_LAST': str(dm_ports[-1]),
@@ -241,6 +243,7 @@ def main():
         }
         for service in ('PLAYER', 'SESSION', 'DM', 'MODERATION', 'SERVER_RULES', 'UNIVERSITY_RECORD', 'APPLICANT', 'CREDENTIAL'):
             settings[service + '_DB_PASSWORD'] = secrets.token_hex(24)
+        settings['ETL_DB_PASSWORD'] = secrets.token_hex(24)
         env_file = work / '.env'
         env_file.write_text(''.join(f'{key}={value}\n' for key, value in settings.items()))
         command = ['docker', 'compose', '--project-directory', str(ROOT), '--env-file', str(env_file),
@@ -284,8 +287,8 @@ def main():
                   [p['target'] for p in config['services']['session']['ports']], [3011])
             check('DM publishes only its WebSocket listener',
                   [p['target'] for p in config['services']['dm-service']['ports']], [3001])
-            check('Player calls Session through internal Gateway',
-                  config['services']['player']['environment']['SESSION_BASE_URL'], 'http://gateway:8001/session')
+            check('Player no longer calls Session over REST',
+                  'SESSION_BASE_URL' in config['services']['player']['environment'], False)
             for name, service in (('player', 'player'), ('dm', 'dm-service'),
                                   ('moderation', 'moderation-service'),
                                   ('applicant', 'applicant'), ('credential', 'credential')):

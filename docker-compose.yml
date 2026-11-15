@@ -15,12 +15,85 @@
 #        openssl genrsa -out keys/session/private.pem 2048
 #        openssl rsa -in keys/session/private.pem -pubout -out keys/session/public.pem
 #
-# Database schemas live in db/<service>/ and run on the first start of an
-# empty volume.
+# Database schemas live in db/<service>/ and run once, when a database's
+# cluster is created.
 
 name: pad-team-20
 
+# Every database is a cluster of three PostgreSQL 17 nodes run by Patroni (one
+# primary, two replicas), which elect the primary through the three etcd nodes
+# below, shared by every cluster. The database host name a service already
+# uses belongs to an HAProxy in front of its cluster. See docker/postgres-ha/
+# and the CPR README, "Replicated databases".
+x-postgres-ha-node: &postgres-ha-node
+  image: ${POSTGRES_HA_IMAGE:-georgerabus/pad-postgres-ha:1.0.0}
+  depends_on: [etcd-1, etcd-2, etcd-3]
+  healthcheck:
+    test: [CMD, pg_isready, -h, 127.0.0.1, -p, "5432"]
+    # The first start creates the cluster: initdb, then each replica copies the primary.
+    start_period: 300s
+    interval: 3s
+    timeout: 3s
+    retries: 20
+  restart: unless-stopped
+
+x-postgres-ha-proxy: &postgres-ha-proxy
+  image: ${POSTGRES_HA_IMAGE:-georgerabus/pad-postgres-ha:1.0.0}
+  entrypoint: [haproxy, -db, -f, /etc/haproxy/pad.cfg]
+  # Healthy once the primary answers through it, in the service's database.
+  healthcheck:
+    test: [CMD, psql, -h, 127.0.0.1, -X, -Atc, "select 1"]
+    start_period: 300s
+    interval: 3s
+    timeout: 3s
+    retries: 20
+  restart: unless-stopped
+
+x-etcd: &etcd
+  image: ${ETCD_IMAGE:-quay.io/coreos/etcd:v3.6.16}
+  networks: [dcs]
+  healthcheck:
+    test: [CMD, etcdctl, endpoint, health]
+    interval: 3s
+    timeout: 3s
+    retries: 20
+  restart: unless-stopped
+
+x-etcd-environment: &etcd-environment
+  ETCD_DATA_DIR: /etcd-data
+  ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+  ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+  ETCD_INITIAL_CLUSTER: etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+  ETCD_INITIAL_CLUSTER_STATE: new
+  ETCD_INITIAL_CLUSTER_TOKEN: pad-team-20
+
 services:
+  # ---- etcd: where every Patroni cluster keeps its leader lock ----
+  etcd-1:
+    <<: *etcd
+    environment:
+      <<: *etcd-environment
+      ETCD_NAME: etcd-1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-1:2380
+    volumes: [etcd-1-data:/etcd-data]
+  etcd-2:
+    <<: *etcd
+    environment:
+      <<: *etcd-environment
+      ETCD_NAME: etcd-2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-2:2380
+    volumes: [etcd-2-data:/etcd-data]
+  etcd-3:
+    <<: *etcd
+    environment:
+      <<: *etcd-environment
+      ETCD_NAME: etcd-3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-3:2380
+    volumes: [etcd-3-data:/etcd-data]
+
   gateway:
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE to a published Gateway repository:tag}
     environment:
@@ -122,24 +195,37 @@ services:
     restart: unless-stopped
 
   # ---- Player Service ----
+  # player-db is the HAProxy in front of the player-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   player-db:
-    image: postgres:17
+    <<: *postgres-ha-proxy
+    depends_on: [player-db-1, player-db-2, player-db-3]
     environment:
-      POSTGRES_DB: player
-      POSTGRES_USER: player
-      POSTGRES_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
-    volumes:
-      - player-db-data:/var/lib/postgresql/data
-      - ./db/player:/docker-entrypoint-initdb.d:ro
+      CLUSTER: player-db
+      PGUSER: player
+      PGDATABASE: player
+      PGPASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
     networks: [player]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U player -d player"]
-      # Fresh-volume initialization can still be finishing its final checkpoint.
-      start_period: 60s
-      interval: 2s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+  player-db-1:
+    <<: *postgres-ha-node
+    environment: &player-db-node
+      PATRONI_SCOPE: player-db
+      PATRONI_SUPERUSER_USERNAME: player
+      PATRONI_SUPERUSER_PASSWORD: ${PLAYER_DB_PASSWORD:?set PLAYER_DB_PASSWORD in .env}
+      POSTGRES_DB: player
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: player-db-1
+    volumes: [player-db-1-data:/var/lib/postgresql/data, ./db/player:/docker-entrypoint-initdb.d:ro]
+    networks: [player, dcs]
+  player-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *player-db-node, PATRONI_NAME: player-db-2}
+    volumes: [player-db-2-data:/var/lib/postgresql/data, ./db/player:/docker-entrypoint-initdb.d:ro]
+    networks: [player, dcs]
+  player-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *player-db-node, PATRONI_NAME: player-db-3}
+    volumes: [player-db-3-data:/var/lib/postgresql/data, ./db/player:/docker-entrypoint-initdb.d:ro]
+    networks: [player, dcs]
 
   player:
     image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0}
@@ -174,23 +260,37 @@ services:
     restart: unless-stopped
 
   # ---- Server Moderation Session Service ----
+  # session-db is the HAProxy in front of the session-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   session-db:
-    image: postgres:17
+    <<: *postgres-ha-proxy
+    depends_on: [session-db-1, session-db-2, session-db-3]
     environment:
-      POSTGRES_DB: session
-      POSTGRES_USER: session
-      POSTGRES_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
-    volumes:
-      - session-db-data:/var/lib/postgresql/data
-      - ./db/session:/docker-entrypoint-initdb.d:ro
+      CLUSTER: session-db
+      PGUSER: session
+      PGDATABASE: session
+      PGPASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
     networks: [session]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U session -d session"]
-      start_period: 60s
-      interval: 2s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+  session-db-1:
+    <<: *postgres-ha-node
+    environment: &session-db-node
+      PATRONI_SCOPE: session-db
+      PATRONI_SUPERUSER_USERNAME: session
+      PATRONI_SUPERUSER_PASSWORD: ${SESSION_DB_PASSWORD:?set SESSION_DB_PASSWORD in .env}
+      POSTGRES_DB: session
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: session-db-1
+    volumes: [session-db-1-data:/var/lib/postgresql/data, ./db/session:/docker-entrypoint-initdb.d:ro]
+    networks: [session, dcs]
+  session-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *session-db-node, PATRONI_NAME: session-db-2}
+    volumes: [session-db-2-data:/var/lib/postgresql/data, ./db/session:/docker-entrypoint-initdb.d:ro]
+    networks: [session, dcs]
+  session-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *session-db-node, PATRONI_NAME: session-db-3}
+    volumes: [session-db-3-data:/var/lib/postgresql/data, ./db/session:/docker-entrypoint-initdb.d:ro]
+    networks: [session, dcs]
 
   session:
     image: ${SESSION_IMAGE:-catalinasiminiuc/pad-server-moderation-session-service:4.0.1}
@@ -240,23 +340,37 @@ services:
     restart: unless-stopped
 
   # ---- Discord DMs Service ----
+  # dm-db is the HAProxy in front of the dm-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   dm-db:
-    image: postgres:17
+    <<: *postgres-ha-proxy
+    depends_on: [dm-db-1, dm-db-2, dm-db-3]
     environment:
-      POSTGRES_DB: dm
-      POSTGRES_USER: dm
-      POSTGRES_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
-    volumes:
-      - dm-db-data:/var/lib/postgresql/data
-      - ./db/dm:/docker-entrypoint-initdb.d:ro
+      CLUSTER: dm-db
+      PGUSER: dm
+      PGDATABASE: dm
+      PGPASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
     networks: [dm]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dm -d dm"]
-      start_period: 60s
-      interval: 2s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+  dm-db-1:
+    <<: *postgres-ha-node
+    environment: &dm-db-node
+      PATRONI_SCOPE: dm-db
+      PATRONI_SUPERUSER_USERNAME: dm
+      PATRONI_SUPERUSER_PASSWORD: ${DM_DB_PASSWORD:?set DM_DB_PASSWORD in .env}
+      POSTGRES_DB: dm
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: dm-db-1
+    volumes: [dm-db-1-data:/var/lib/postgresql/data, ./db/dm:/docker-entrypoint-initdb.d:ro]
+    networks: [dm, dcs]
+  dm-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *dm-db-node, PATRONI_NAME: dm-db-2}
+    volumes: [dm-db-2-data:/var/lib/postgresql/data, ./db/dm:/docker-entrypoint-initdb.d:ro]
+    networks: [dm, dcs]
+  dm-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *dm-db-node, PATRONI_NAME: dm-db-3}
+    volumes: [dm-db-3-data:/var/lib/postgresql/data, ./db/dm:/docker-entrypoint-initdb.d:ro]
+    networks: [dm, dcs]
 
   dm-service:
     image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.5.0}
@@ -321,23 +435,37 @@ services:
     restart: unless-stopped
 
   # ---- Moderation Service ----
+  # moderation-db is the HAProxy in front of the moderation-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   moderation-db:
-    image: postgres:17
+    <<: *postgres-ha-proxy
+    depends_on: [moderation-db-1, moderation-db-2, moderation-db-3]
     environment:
-      POSTGRES_DB: moderation
-      POSTGRES_USER: moderation
-      POSTGRES_PASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
-    volumes:
-      - moderation-db-data:/var/lib/postgresql/data
-      - ./db/moderation:/docker-entrypoint-initdb.d:ro
+      CLUSTER: moderation-db
+      PGUSER: moderation
+      PGDATABASE: moderation
+      PGPASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
     networks: [moderation]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U moderation -d moderation"]
-      start_period: 60s
-      interval: 2s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+  moderation-db-1:
+    <<: *postgres-ha-node
+    environment: &moderation-db-node
+      PATRONI_SCOPE: moderation-db
+      PATRONI_SUPERUSER_USERNAME: moderation
+      PATRONI_SUPERUSER_PASSWORD: ${MODERATION_DB_PASSWORD:?set MODERATION_DB_PASSWORD in .env}
+      POSTGRES_DB: moderation
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: moderation-db-1
+    volumes: [moderation-db-1-data:/var/lib/postgresql/data, ./db/moderation:/docker-entrypoint-initdb.d:ro]
+    networks: [moderation, dcs]
+  moderation-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *moderation-db-node, PATRONI_NAME: moderation-db-2}
+    volumes: [moderation-db-2-data:/var/lib/postgresql/data, ./db/moderation:/docker-entrypoint-initdb.d:ro]
+    networks: [moderation, dcs]
+  moderation-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *moderation-db-node, PATRONI_NAME: moderation-db-3}
+    volumes: [moderation-db-3-data:/var/lib/postgresql/data, ./db/moderation:/docker-entrypoint-initdb.d:ro]
+    networks: [moderation, dcs]
 
   moderation-service:
     image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.5.0}
@@ -386,22 +514,37 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # server-rules-db is the HAProxy in front of the server-rules-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   server-rules-db:
-    image: postgres:17-bookworm
+    <<: *postgres-ha-proxy
+    depends_on: [server-rules-db-1, server-rules-db-2, server-rules-db-3]
     environment:
-      POSTGRES_DB: server_rules
-      POSTGRES_USER: server_rules
-      POSTGRES_PASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
-    volumes:
-      - server-rules-db-data:/var/lib/postgresql/data
-      - ./db/server-rules:/docker-entrypoint-initdb.d:ro
+      CLUSTER: server-rules-db
+      PGUSER: server_rules
+      PGDATABASE: server_rules
+      PGPASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
     networks: [server-rules]
-    healthcheck:
-      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U server_rules -d server_rules"]
-      start_period: 60s
-      interval: 3s
-      timeout: 3s
-      retries: 20
+  server-rules-db-1:
+    <<: *postgres-ha-node
+    environment: &server-rules-db-node
+      PATRONI_SCOPE: server-rules-db
+      PATRONI_SUPERUSER_USERNAME: server_rules
+      PATRONI_SUPERUSER_PASSWORD: ${SERVER_RULES_DB_PASSWORD:?Set SERVER_RULES_DB_PASSWORD in .env}
+      POSTGRES_DB: server_rules
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: server-rules-db-1
+    volumes: [server-rules-db-1-data:/var/lib/postgresql/data, ./db/server-rules:/docker-entrypoint-initdb.d:ro]
+    networks: [server-rules, dcs]
+  server-rules-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *server-rules-db-node, PATRONI_NAME: server-rules-db-2}
+    volumes: [server-rules-db-2-data:/var/lib/postgresql/data, ./db/server-rules:/docker-entrypoint-initdb.d:ro]
+    networks: [server-rules, dcs]
+  server-rules-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *server-rules-db-node, PATRONI_NAME: server-rules-db-3}
+    volumes: [server-rules-db-3-data:/var/lib/postgresql/data, ./db/server-rules:/docker-entrypoint-initdb.d:ro]
+    networks: [server-rules, dcs]
   server-rules:
     image: ${SERVER_RULES_IMAGE:?set SERVER_RULES_IMAGE to a Gateway-compatible repository:tag}
     environment:
@@ -433,22 +576,37 @@ services:
       timeout: 3s
       retries: 5
     networks: [server-rules, backend]
+  # university-record-db is the HAProxy in front of the university-record-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   university-record-db:
-    image: postgres:17-bookworm
+    <<: *postgres-ha-proxy
+    depends_on: [university-record-db-1, university-record-db-2, university-record-db-3]
     environment:
-      POSTGRES_DB: university_record
-      POSTGRES_USER: university_record
-      POSTGRES_PASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
-    volumes:
-      - university-record-db-data:/var/lib/postgresql/data
-      - ./db/university-record:/docker-entrypoint-initdb.d:ro
+      CLUSTER: university-record-db
+      PGUSER: university_record
+      PGDATABASE: university_record
+      PGPASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
     networks: [university-record]
-    healthcheck:
-      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U university_record -d university_record"]
-      start_period: 60s
-      interval: 3s
-      timeout: 3s
-      retries: 20
+  university-record-db-1:
+    <<: *postgres-ha-node
+    environment: &university-record-db-node
+      PATRONI_SCOPE: university-record-db
+      PATRONI_SUPERUSER_USERNAME: university_record
+      PATRONI_SUPERUSER_PASSWORD: ${UNIVERSITY_RECORD_DB_PASSWORD:?Set UNIVERSITY_RECORD_DB_PASSWORD in .env}
+      POSTGRES_DB: university_record
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: university-record-db-1
+    volumes: [university-record-db-1-data:/var/lib/postgresql/data, ./db/university-record:/docker-entrypoint-initdb.d:ro]
+    networks: [university-record, dcs]
+  university-record-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *university-record-db-node, PATRONI_NAME: university-record-db-2}
+    volumes: [university-record-db-2-data:/var/lib/postgresql/data, ./db/university-record:/docker-entrypoint-initdb.d:ro]
+    networks: [university-record, dcs]
+  university-record-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *university-record-db-node, PATRONI_NAME: university-record-db-3}
+    volumes: [university-record-db-3-data:/var/lib/postgresql/data, ./db/university-record:/docker-entrypoint-initdb.d:ro]
+    networks: [university-record, dcs]
   university-record:
     image: ${UNIVERSITY_RECORD_IMAGE:?set UNIVERSITY_RECORD_IMAGE to a Gateway-compatible repository:tag}
     environment:
@@ -482,23 +640,37 @@ services:
     networks: [university-record, backend]
 
   # ---- Applicant Service ----
+  # applicant-db is the HAProxy in front of the applicant-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   applicant-db:
-    image: postgres:17
+    <<: *postgres-ha-proxy
+    depends_on: [applicant-db-1, applicant-db-2, applicant-db-3]
     environment:
-      POSTGRES_DB: applicant
-      POSTGRES_USER: applicant
-      POSTGRES_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
-    volumes:
-      - applicant-db-data:/var/lib/postgresql/data
-      - ./db/applicant:/docker-entrypoint-initdb.d:ro
+      CLUSTER: applicant-db
+      PGUSER: applicant
+      PGDATABASE: applicant
+      PGPASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
     networks: [applicant]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U applicant -d applicant"]
-      start_period: 60s
-      interval: 2s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+  applicant-db-1:
+    <<: *postgres-ha-node
+    environment: &applicant-db-node
+      PATRONI_SCOPE: applicant-db
+      PATRONI_SUPERUSER_USERNAME: applicant
+      PATRONI_SUPERUSER_PASSWORD: ${APPLICANT_DB_PASSWORD:?set APPLICANT_DB_PASSWORD in .env}
+      POSTGRES_DB: applicant
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: applicant-db-1
+    volumes: [applicant-db-1-data:/var/lib/postgresql/data, ./db/applicant:/docker-entrypoint-initdb.d:ro]
+    networks: [applicant, dcs]
+  applicant-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *applicant-db-node, PATRONI_NAME: applicant-db-2}
+    volumes: [applicant-db-2-data:/var/lib/postgresql/data, ./db/applicant:/docker-entrypoint-initdb.d:ro]
+    networks: [applicant, dcs]
+  applicant-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *applicant-db-node, PATRONI_NAME: applicant-db-3}
+    volumes: [applicant-db-3-data:/var/lib/postgresql/data, ./db/applicant:/docker-entrypoint-initdb.d:ro]
+    networks: [applicant, dcs]
 
   applicant:
     image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:4.0.0}
@@ -523,23 +695,37 @@ services:
     restart: unless-stopped
 
   # ---- Credential Service ----
+  # credential-db is the HAProxy in front of the credential-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   credential-db:
-    image: postgres:17
+    <<: *postgres-ha-proxy
+    depends_on: [credential-db-1, credential-db-2, credential-db-3]
     environment:
-      POSTGRES_DB: credential
-      POSTGRES_USER: credential
-      POSTGRES_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
-    volumes:
-      - credential-db-data:/var/lib/postgresql/data
-      - ./db/credential:/docker-entrypoint-initdb.d:ro
+      CLUSTER: credential-db
+      PGUSER: credential
+      PGDATABASE: credential
+      PGPASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
     networks: [credential]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U credential -d credential"]
-      start_period: 60s
-      interval: 2s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
+  credential-db-1:
+    <<: *postgres-ha-node
+    environment: &credential-db-node
+      PATRONI_SCOPE: credential-db
+      PATRONI_SUPERUSER_USERNAME: credential
+      PATRONI_SUPERUSER_PASSWORD: ${CREDENTIAL_DB_PASSWORD:?set CREDENTIAL_DB_PASSWORD in .env}
+      POSTGRES_DB: credential
+      ETL_DB_PASSWORD: ${ETL_DB_PASSWORD:?set ETL_DB_PASSWORD in .env}
+      PATRONI_NAME: credential-db-1
+    volumes: [credential-db-1-data:/var/lib/postgresql/data, ./db/credential:/docker-entrypoint-initdb.d:ro]
+    networks: [credential, dcs]
+  credential-db-2:
+    <<: *postgres-ha-node
+    environment: {<<: *credential-db-node, PATRONI_NAME: credential-db-2}
+    volumes: [credential-db-2-data:/var/lib/postgresql/data, ./db/credential:/docker-entrypoint-initdb.d:ro]
+    networks: [credential, dcs]
+  credential-db-3:
+    <<: *postgres-ha-node
+    environment: {<<: *credential-db-node, PATRONI_NAME: credential-db-3}
+    volumes: [credential-db-3-data:/var/lib/postgresql/data, ./db/credential:/docker-entrypoint-initdb.d:ro]
+    networks: [credential, dcs]
 
   credential:
     image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:4.0.0}
@@ -687,17 +873,37 @@ networks:
   session:
   dm:
   moderation:
+  dcs:
 
 volumes:
   broker-data:
-  applicant-db-data:
-  credential-db-data:
-  server-rules-db-data:
-  university-record-db-data:
-  player-db-data:
-  session-db-data:
-  dm-db-data:
-  moderation-db-data:
+  etcd-1-data:
+  etcd-2-data:
+  etcd-3-data:
+  player-db-1-data:
+  player-db-2-data:
+  player-db-3-data:
+  session-db-1-data:
+  session-db-2-data:
+  session-db-3-data:
+  dm-db-1-data:
+  dm-db-2-data:
+  dm-db-3-data:
+  moderation-db-1-data:
+  moderation-db-2-data:
+  moderation-db-3-data:
+  server-rules-db-1-data:
+  server-rules-db-2-data:
+  server-rules-db-3-data:
+  university-record-db-1-data:
+  university-record-db-2-data:
+  university-record-db-3-data:
+  applicant-db-1-data:
+  applicant-db-2-data:
+  applicant-db-3-data:
+  credential-db-1-data:
+  credential-db-2-data:
+  credential-db-3-data:
   prometheus-data:
   loki-data:
   promtail-data:

@@ -1,0 +1,43 @@
+# What every node shares. The node's own name and addresses, and the users,
+# come from the environment (see pad-patroni and docker-compose.yml).
+restapi:
+  listen: 0.0.0.0:8008
+
+etcd3:
+  hosts: etcd-1:2379,etcd-2:2379,etcd-3:2379
+
+bootstrap:
+  # Written to etcd when the cluster is created; patronictl edit-config
+  # changes them later.
+  dcs:
+    # A primary that cannot renew its lock for 20 s stops being primary, and
+    # a replica takes over. loop_wait + 2 * retry_timeout must fit in ttl.
+    ttl: 20
+    loop_wait: 5
+    retry_timeout: 5
+    maximum_lag_on_failover: 1048576
+    # A commit returns once one replica has it too, and only that replica may
+    # be promoted. With both replicas down the primary carries on alone.
+    synchronous_mode: true
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_log_hints: "on"
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  post_bootstrap: /usr/local/bin/pad-post-bootstrap
+
+postgresql:
+  listen: 0.0.0.0:5432
+  data_dir: /var/lib/postgresql/data/pgdata
+  pgpass: /tmp/pgpass
+  # A new replica copies the primary at once, rather than waiting for a
+  # spread checkpoint, which takes minutes.
+  basebackup:
+    - checkpoint: fast
+  pg_hba:
+    - local all all trust
+    - host replication replicator all scram-sha-256
+    - host all all all scram-sha-256

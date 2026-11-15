@@ -953,9 +953,13 @@ transaction open at that moment is lost, and so is the request it belonged to.
 ```
 
 That is a query that fails on a connection error (SQLSTATE class `08`), on a
-server shutting down or starting up (`57P01`, `57P02`, `57P03`) or on a server
-that is read only (`25006`). Through the broker it is a reply with status
-`503`, or `UNAVAILABLE` with `x-error: DEPENDENCY_UNAVAILABLE` over gRPC.
+server shutting down or starting up (`57P01`, `57P02`, `57P03`), on a server
+that is read only (`25006`), or on a connection that drops in the middle of
+it, as HAProxy drops them on a failover. That last one has no SQLSTATE from
+the server (PHP's PDO reports `HY000`), so it is known by the client library's
+message, as Laravel's `LostConnectionDetector` does. Through the broker it is
+a reply with status `503`, never stored as the message's reply, or
+`UNAVAILABLE` with `x-error: DEPENDENCY_UNAVAILABLE` over gRPC.
 
 The failure is the database's, not the instance's, and every instance of the
 service shares that database, so the code never counts against an instance.
@@ -972,6 +976,68 @@ The clusters start empty; nothing is carried over from the single databases.
 Every service creates its schema on startup, as it does today, and the
 template runs each `db/<service>/` script once, when the cluster is created.
 Every cluster has the read-only user `etl`, for the warehouse.
+
+#### The template
+
+One image, `georgerabus/pad-postgres-ha` (built from
+[docker/postgres-ha/](docker/postgres-ha/)), runs every node and every HAProxy:
+`postgres:17.12-trixie` with Patroni 4.1 from the PGDG repository and HAProxy
+3.0 from Debian. etcd is `quay.io/coreos/etcd:v3.6.16`. For each database in
+Compose:
+
+| Service | What it is |
+|---|---|
+| `<service>-db` | the HAProxy, under the host name the service already uses; healthy once the primary answers in the service's database |
+| `<service>-db-1`, `-2`, `-3` | the Patroni nodes, each with its volume `<service>-db-<n>-data` |
+| `etcd-1`, `-2`, `-3` | the shared etcd, on the `dcs` network with every node and no service |
+
+- **Users.** The service's user is the cluster's superuser and owns its
+  database, with the password it already had, as with the postgres image.
+  `replicator` replicates, with the same password. `etl` is in
+  `pg_read_all_data`, reads with `default_transaction_read_only` on, and has
+  the password `ETL_DB_PASSWORD`, the same in every cluster.
+- **Creation.** The first node to take etcd's initialize key runs `initdb`,
+  then `pad-post-bootstrap`: it creates the database, runs the `db/<service>/`
+  scripts in it as the service's user, and creates `etl`. The other two nodes
+  copy the primary with `pg_basebackup` and stream from it.
+- **Settings**, in `patroni.yml`: `ttl` 20, `loop_wait` 5, `retry_timeout` 5,
+  `synchronous_mode`, `use_pg_rewind`, so an old primary comes back as a
+  replica on its own. HAProxy asks each node's `GET /primary` or
+  `GET /replica` on port 8008 every 2 seconds, marks it down after 2 failures,
+  and then closes the connections still open to it.
+- **Upgrading from Lab 4.** The single databases' volumes (`<service>-db-data`)
+  are no longer used. `docker compose up` creates the clusters empty, and
+  `docker volume rm pad-team-20_<service>-db-data` frees the old ones. The
+  services then create their schema again, as on a first start.
+
+`patronictl` shows a cluster: who is the primary, who is the synchronous
+standby, and how far each replica is behind.
+
+```bash
+docker compose exec applicant-db-1 patronictl -c /etc/patroni/patroni.yml list
+```
+
+**A cluster that never finishes its first start.** If etcd answers too slowly
+while a cluster is created, Patroni can lose track of the node creating it:
+its write of the `initialize` key times out after it has landed, and that key
+has no owner. Then every node logs `waiting for leader to bootstrap` forever.
+It can only happen before the cluster exists. Deleting the key lets the nodes
+race again:
+
+```bash
+docker compose exec etcd-1 etcdctl del /service/dm-db/initialize
+```
+
+`tests/verify_postgres_ha.py` runs etcd and two clusters from this Compose in
+a disposable project. It checks everything above: the roles, the service's
+user and database on `5432`, the `db/player/` script run once, `etl` on
+`5433` and unable to write, and a primary killed with every confirmed write
+kept. It also checks that the old primary comes back as a replica and that a
+primary goes on committing with both replicas down. On a laptop both
+clusters were up 27 s after `docker compose up`, and the new primary took over
+19 to 24 s after the old one was killed. Idle, a node takes about 70 MB, an
+etcd node about 40 MB, and an HAProxy about 15 MB, plus the `psql` its
+healthcheck runs.
 
 ### Creating an applicant across three databases
 
@@ -1370,8 +1436,8 @@ The Gateway reads each service's instances from Service Discovery and spreads
 its requests across them. What goes through the Message Broker is placed by
 the broker instead, by load, and rerouted when an instance fails.
 
-PostgreSQL initializes the Node services' schemas from `db/<service>` on an
-empty volume. Applicant/Credential use Laravel migrations at startup and need
+The Node services' schemas come from `db/<service>`, run once when a
+database's cluster is created (see [The template](#the-template)). Applicant/Credential use Laravel migrations at startup and need
 no APP_KEY because they are JSON APIs with no cookie/session encryption.
 Credential still needs CREDENTIAL_ISSUER_SECRET to sign documents. Named volumes retain data; `docker compose down -v` deletes this deployment's data.
 

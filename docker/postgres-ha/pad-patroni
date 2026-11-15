@@ -1,0 +1,15 @@
+#!/bin/sh
+# Starts Patroni on a node named PATRONI_NAME, the host name its peers and
+# HAProxy reach it by. The replication user's password is the superuser's
+# unless one is given: both stay inside the cluster's own network.
+set -eu
+: "${PATRONI_NAME:?set PATRONI_NAME to the node host name}"
+: "${PATRONI_SUPERUSER_PASSWORD:?set PATRONI_SUPERUSER_PASSWORD}"
+# Patroni takes the PATRONI_ variables out of its environment, so the
+# superuser's name also goes in PGUSER, for pad-post-bootstrap and for psql.
+export PGUSER="${PATRONI_SUPERUSER_USERNAME:?set PATRONI_SUPERUSER_USERNAME}"
+export PATRONI_RESTAPI_CONNECT_ADDRESS="${PATRONI_RESTAPI_CONNECT_ADDRESS:-$PATRONI_NAME:8008}"
+export PATRONI_POSTGRESQL_CONNECT_ADDRESS="${PATRONI_POSTGRESQL_CONNECT_ADDRESS:-$PATRONI_NAME:5432}"
+export PATRONI_REPLICATION_USERNAME="${PATRONI_REPLICATION_USERNAME:-replicator}"
+export PATRONI_REPLICATION_PASSWORD="${PATRONI_REPLICATION_PASSWORD:-$PATRONI_SUPERUSER_PASSWORD}"
+exec patroni /etc/patroni/patroni.yml
