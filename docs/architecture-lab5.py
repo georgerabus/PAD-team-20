@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generates docs/architecture-lab4.svg: the Lab 4 deployment topology.
+"""Generates docs/images/architecture-lab5.png: the Lab 5 deployment topology.
 
 Hand-laid rather than auto-arranged, because the interesting part of this
 system is which lane a line belongs to -- REST, WebSocket, broker, registry,
-telemetry -- and an automatic layout puts them wherever it likes.
+cache, warehouse, telemetry -- and an automatic layout puts them wherever it
+likes.
 
 Every box is a container in docker-compose.yml. Arrowheads are drawn as
 polygons rather than SVG markers, and every label is a <text> element, so the
@@ -15,7 +16,7 @@ import pathlib
 import subprocess
 import tempfile
 
-W, H = 1880, 980
+W, H = 1880, 1114
 
 INK = "#1F2933"
 MUTED = "#64748B"
@@ -27,12 +28,16 @@ SVC_F, SVC_S, SVC_T = "#ECFDF5", "#34D399", "#065F46"
 DB_F, DB_S, DB_T = "#F1F5F9", "#A3AEBE", "#475569"
 BRK_F, BRK_S, BRK_T = "#FFFBEB", "#FBBF24", "#92400E"
 MON_F, MON_S, MON_T = "#FDF4FF", "#D8B4FE", "#6B21A8"
+CACHE_F, CACHE_S, CACHE_T = "#FEF2F2", "#F87171", "#991B1B"
+DW_F, DW_S, DW_T = "#F0FDFA", "#2DD4BF", "#115E59"
 
 C_REST = "#334155"
 C_WS = "#0E7490"
 C_BROKER = "#B45309"
 C_DISC = "#4F46E5"
 C_TEL = "#9333EA"
+C_CACHE = "#DC2626"
+C_DW = "#0F766E"
 
 FONT = "'Helvetica Neue',Helvetica,Arial,sans-serif"
 MONO = "'SF Mono',Menlo,Consolas,monospace"
@@ -99,12 +104,13 @@ def label(x, y, lines, size=11.5, fill=None, anchor="middle", font=FONT, weight=
         text(x, y + i * lh, l, size=size, fill=fill, anchor=anchor, font=font, weight=weight)
 
 
+
 # ---------------------------------------------------------------- canvas ----
 add(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
     f'viewBox="0 0 {W} {H}">')
 add(f'<rect width="{W}" height="{H}" fill="#FFFFFF"/>')
 
-text(40, 44, "Student ID, please — Lab 4 deployment topology", 21, INK, "bold")
+text(40, 44, "Student ID, please — Lab 5 deployment topology", 21, INK, "bold")
 text(40, 68, "Every box is a container in docker-compose.yml. Ports are the published ones.",
      12.5, MUTED)
 
@@ -113,23 +119,36 @@ rect(70, 100, 200, 54, "#FFFFFF", FAINT, r=27)
 text(170, 124, "Client", 14, INK, "bold", "middle")
 text(170, 141, "browser · Postman", 11, MUTED, "normal", "middle")
 
-rect(40, 210, 260, 104, PLAT_F, PLAT_S)
-text(170, 236, "Gateway", 15, PLAT_T, "bold", "middle")
-text(170, 255, "Python / FastAPI · one instance", 10.5, MUTED, "normal", "middle")
-text(170, 275, "published 8080 → public 8000", 11, INK, "normal", "middle", MONO)
-text(170, 292, "internal 8001 · no database", 11, INK, "normal", "middle", MONO)
-text(170, 307, "validates tokens · GET /logs, the system's log", 10.5, MUTED, "normal", "middle")
+GY, GH = 210, 118
+rect(40, GY, 260, GH, PLAT_F, PLAT_S)
+text(170, GY + 26, "Gateway", 15, PLAT_T, "bold", "middle")
+text(170, GY + 45, "Python / FastAPI · one instance", 10.5, MUTED, "normal", "middle")
+text(170, GY + 65, "published 8080 → public 8000", 11, INK, "normal", "middle", MONO)
+text(170, GY + 82, "internal 8001 · no database", 11, INK, "normal", "middle", MONO)
+text(170, GY + 97, "validates tokens · GET /logs, the system's log", 10.5, MUTED, "normal", "middle")
+text(170, GY + 112, "caches GET answers and tokens", 10.5, MUTED, "normal", "middle")
 
-rect(40, 400, 260, 130, PLAT_F, PLAT_S)
-text(170, 426, "Service Discovery", 15, PLAT_T, "bold", "middle")
-text(170, 445, "Python / FastAPI · registry in memory", 10.5, MUTED, "normal", "middle")
-text(170, 467, "POST /register", 11, INK, "normal", "middle", MONO)
-text(170, 484, "GET /status every 5s", 11, INK, "normal", "middle", MONO)
-text(170, 501, "GET /services · GET /metrics", 11, INK, "normal", "middle", MONO)
-text(170, 519, "removes what stops answering", 10.5, MUTED, "normal", "middle")
+# The cache: three Valkey nodes that only the Gateway uses. The Gateway picks
+# the node for each key on a consistent-hashing ring of its own.
+VX, VY, VW, VH = 80, 362, 180, 60
+rect(VX + 7, VY + 7, VW, VH, "#FFFFFF", CACHE_S, r=7, sw=1)
+rect(VX + 3.5, VY + 3.5, VW, VH, "#FFFFFF", CACHE_S, r=7, sw=1)
+rect(VX, VY, VW, VH, CACHE_F, CACHE_S, r=7)
+text(VX + VW / 2, VY + 22, "Valkey", 13, CACHE_T, "bold", "middle")
+text(VX + VW / 2, VY + 38, "valkey-1 · valkey-2 · valkey-3", 9.5, INK, "normal", "middle", MONO)
+text(VX + VW / 2, VY + 52, "allkeys-lru · nothing on disk", 9.5, MUTED, "normal", "middle")
+
+SY, SH = 470, 130
+rect(40, SY, 260, SH, PLAT_F, PLAT_S)
+text(170, SY + 26, "Service Discovery", 15, PLAT_T, "bold", "middle")
+text(170, SY + 45, "Python / FastAPI · registry in memory", 10.5, MUTED, "normal", "middle")
+text(170, SY + 67, "POST /register", 11, INK, "normal", "middle", MONO)
+text(170, SY + 84, "GET /status every 5s", 11, INK, "normal", "middle", MONO)
+text(170, SY + 101, "GET /services · GET /metrics", 11, INK, "normal", "middle", MONO)
+text(170, SY + 119, "removes what stops answering", 10.5, MUTED, "normal", "middle")
 
 # --------------------------------------------------------- services panel ---
-PX, PY, PW, PH = 340, 100, 930, 432
+PX, PY, PW, PH = 340, 100, 930, 520
 rect(PX, PY, PW, PH, PANEL_F, PANEL_S, r=12)
 # (the panel's heading is drawn last, over the lines that cross it)
 
@@ -143,7 +162,7 @@ ROWS = [
         ("Player", "accounts, friends, XP", "player-db"),
         ("Moderation", "accept / reject / flag / ban", "moderation-db"),
     ]),
-    (PY + 252, [
+    (PY + 272, [
         ("Applicant", "who is at the door", "applicant-db"),
         ("Credential", "are the documents sound", "credential-db"),
         ("University Record", "the hidden truth", "university-record-db"),
@@ -160,31 +179,68 @@ for by, cells in ROWS:
         text(cx + CW / 2, by + 25, name, 13, SVC_T, "bold", "middle")
         text(cx + CW / 2, by + 42, blurb, 10, MUTED, "normal", "middle")
         text(cx + CW - 10, by + 56, "× 2", 10, SVC_S, "bold", "end")
+        # The database: three Patroni nodes behind one HAProxy, drawn as one
+        # stack, like a service's replicas.
         dy = by + 92
         line(f"M {cx+CW/2},{by+69} V {dy}", DB_S, 1.2)
+        cylinder(cx + 28 + 7, dy + 7, CW - 56, 48, "#FFFFFF", DB_S, 1)
+        cylinder(cx + 28 + 3.5, dy + 3.5, CW - 56, 48, "#FFFFFF", DB_S, 1)
         cylinder(cx + 28, dy, CW - 56, 48, DB_F, DB_S)
         text(cx + CW / 2, dy + 32, db, 10, DB_T, "normal", "middle", MONO)
+        text(cx + CW / 2, dy + 72, "Patroni × 3 · HAProxy", 9.5, FAINT, "normal", "middle")
         svc[name] = (cx, by, CW, 62)
 
-text(PX + 20, PY + PH - 14,
-     "postgres:17, one per service, data in a named volume  ·  a service and its database "
-     "share a private network", 10.5, FAINT)
-text(PX + PW - 20, PY + PH - 14, "two replicas each by default", 10.5, FAINT, "normal", "end")
+text(PX + 20, PY + PH - 34,
+     "Each database: Patroni, a primary and two replicas, one of them synchronous; HAProxy under "
+     "the old name — 5432 primary, 5433 replicas", 10.5, FAINT)
+text(PX + 20, PY + PH - 16,
+     "a service and its database share a private network  ·  two replicas of each service "
+     "by default", 10.5, FAINT)
+
+# etcd: the three members every Patroni node keeps its lease in.
+EX, EY, EW, EH = PX + PW - 196, PY + PH - 62, 176, 44
+rect(EX + 6, EY + 6, EW, EH, "#FFFFFF", DB_S, r=7, sw=1)
+rect(EX + 3, EY + 3, EW, EH, "#FFFFFF", DB_S, r=7, sw=1)
+rect(EX, EY, EW, EH, DB_F, DB_S, r=7)
+text(EX + EW / 2, EY + 19, "etcd × 3", 12, DB_T, "bold", "middle")
+text(EX + EW / 2, EY + 35, "elects each cluster's primary", 9.5, MUTED, "normal", "middle")
 
 # ----------------------------------------------------------------- broker ---
-BX, BY, BW, BH = 340, 584, 930, 128
+BX, BY, BW, BH = 340, PY + PH + 52, 600, 136
 rect(BX, BY, BW, BH, BRK_F, BRK_S, r=12)
 text(BX + 28, BY + 36, "Message Broker", 16, BRK_T, "bold")
 text(BX + 28, BY + 60, "HTTP 8000   ·   gRPC 9001", 12, INK, "normal", "start", MONO)
 text(BX + 28, BY + 82, "one queue per topic · retries · dead letters", 11.5, MUTED)
-text(BX + 28, BY + 102, "picks the instance and gives up on a failing one — so no service "
-     "carries a circuit breaker of its own", 10.5, MUTED)
-cylinder(BX + BW - 160, BY + 24, 120, 76, "#FFFFFF", BRK_S)
-text(BX + BW - 100, BY + 70, "broker-data", 10, BRK_T, "normal", "middle", MONO)
-text(BX + BW - 100, BY + 116, "queues survive a restart", 10, FAINT, "normal", "middle")
+text(BX + 28, BY + 102, "picks the instance, gives up on a failing one", 10.5, MUTED)
+text(BX + 28, BY + 122, "saga coordinator: POST /sagas · GET /sagas/{id}", 10.5, BRK_T,
+     "normal", "start", MONO)
+cylinder(BX + BW - 150, BY + 24, 120, 76, "#FFFFFF", BRK_S)
+text(BX + BW - 90, BY + 66, "broker-data", 10, BRK_T, "normal", "middle", MONO)
+text(BX + BW - 90, BY + 118, "queues and sagas", 10, FAINT, "normal", "middle")
+text(BX + BW - 90, BY + 131, "survive a restart", 10, FAINT, "normal", "middle")
+
+# ------------------------------------------------------------- warehouse ---
+# The ETL reads every database's replicas and loads a star schema; Grafana
+# reads it. Under the services because that is where its data comes from.
+WX, WY, WW, WH = 980, BY, 290, 136
+rect(WX, WY, WW, WH, DW_F, DW_S, r=12)
+text(WX + WW - 16, WY + 24, "Data warehouse", 14, DW_T, "bold", "end")
+
+ETL = (WX + 16, WY + 38, 124, 66)
+rect(*ETL, "#FFFFFF", DW_S, r=8)
+text(WX + 78, WY + 60, "ETL", 13, DW_T, "bold", "middle")
+text(WX + 78, WY + 76, "Python · every 5 min", 9.5, MUTED, "normal", "middle")
+text(WX + 78, WY + 92, "POST /etl/run", 9.5, INK, "normal", "middle", MONO)
+
+cylinder(WX + 166, WY + 36, 108, 70, "#FFFFFF", DW_S)
+text(WX + 220, WY + 74, "warehouse-db", 10, DW_T, "normal", "middle", MONO)
+text(WX + 220, WY + 90, "star schema", 9.5, MUTED, "normal", "middle")
+arrow(f"M {WX+140},{WY+71} H {WX+160}", C_DW, (WX + 166, WY + 71), 0, 2.0, size=8)
+
+text(WX + 16, WY + 120, "never a name, a secret or free text", 9.5, MUTED)
 
 # ------------------------------------------------------------- monitoring ---
-MX, MY, MW, MH = 1310, 100, 530, 612
+MX, MY, MW, MH = 1310, 100, 530, BY + BH - 100
 rect(MX, MY, MW, MH, MON_F, MON_S, r=12, dash="6 4")
 text(MX + 24, MY + 26, "Logs, traces, monitoring", 14, MON_T, "bold")
 text(MX + 24, MY + 44, "Loki and Promtail always run; the rest with --profile monitoring", 10, MUTED,
@@ -206,10 +262,11 @@ cylinder(MX + 60, MY + 210, 160, 76, "#FFFFFF", MON_S)
 text(MX + 140, MY + 256, "Loki", 13, MON_T, "bold", "middle")
 text(MX + 140, MY + 306, "loki-data", 10, FAINT, "normal", "middle", MONO)
 
-rect(MX + 110, MY + 390, 270, 92, "#FFFFFF", MON_S, r=8)
+GR = (MX + 110, MY + 390, 270, 92)
+rect(*GR, "#FFFFFF", MON_S, r=8)
 text(MX + 245, MY + 422, "Grafana", 15, MON_T, "bold", "middle")
 text(MX + 245, MY + 442, "localhost:3300", 11, INK, "normal", "middle", MONO)
-text(MX + 245, MY + 460, "System Overview · Logs dashboards", 10, MUTED, "normal", "middle")
+text(MX + 245, MY + 460, "System Overview · Logs · Warehouse", 10, MUTED, "normal", "middle")
 
 TE = (MX + 280, MY + 150, 220, 68)
 rect(*TE, "#FFFFFF", MON_S, r=8)
@@ -251,27 +308,43 @@ label(376, 230, ["REST · to one instance"], 10.5, C_REST, "middle")
 arrow("M 450,288 H 308", C_REST, (300, 288), 180, 2.0)
 label(378, 308, ["internal 8001", "service to service"], 10.5, C_REST, "middle")
 
-# services <-> broker
-arrow("M 620,532 V 578", C_BROKER, (620, 584), 90, 3.2, size=12)
-label(620, 562, ["requests · events"], 11, C_BROKER, "middle")
-arrow("M 980,584 V 538", C_BROKER, (980, 532), 270, 3.2, size=12)
-label(980, 562, ["POST /broker/deliver  ·  gRPC 9001"], 11, C_BROKER, "middle")
+# Gateway -> Valkey: GET answers and verified tokens, on the Gateway's ring
+arrow(f"M 170,{GY+GH} V {VY-6}", C_CACHE, (170, VY), 90, 2.0, size=9)
+label(180, GY + GH + 21, ["consistent-hash ring"], 10, C_CACHE, "start")
 
-# Gateway <-> Service Discovery
-arrow("M 150,314 V 394", C_DISC, (150, 400), 90, 1.6, "5 4", 9)
-label(150, 360, ["GET /services"], 11, C_DISC, "middle")
-arrow("M 76,400 C 54,368 54,344 74,320", C_DISC, (78, 314), 310, 1.6, "5 4", 8)
-label(54, 358, ["GET", "/status"], 9.5, C_DISC, "middle")
+# services <-> broker
+arrow(f"M 620,{PY+PH} V {BY-6}", C_BROKER, (620, BY), 90, 3.2, size=12)
+label(620, PY + PH + 30, ["requests · events"], 11, C_BROKER, "middle")
+arrow(f"M 840,{BY} V {PY+PH+6}", C_BROKER, (840, PY + PH), 270, 3.2, size=12)
+label(840, PY + PH + 30, ["POST /broker/deliver  ·  gRPC 9001"], 11, C_BROKER, "middle")
+
+# every database's replicas -> the ETL
+arrow(f"M {WX+60},{PY+PH} V {WY+32}", C_DW, (WX + 60, WY + 38), 90, 2.0, "8 4", 9)
+label(WX + 60, PY + PH + 30, ["replicas :5433 · read-only etl"], 10.5, C_DW, "middle")
+
+# warehouse-db -> Grafana, read as grafana_reader
+arrow(f"M {WX+WW},{WY+71} H {MX+40} V {MY+460} H {GR[0]-6}", C_DW, (GR[0], MY + 460), 0,
+      2.0, "8 4", 9)
+label(MX + 48, MY + 560, ["read as", "grafana_reader"], 10, C_DW, "start")
+
+# Gateway <-> Service Discovery, past the cache on its right
+arrow(f"M 286,{GY+GH} V {SY-6}", C_DISC, (286, SY), 90, 1.6, "5 4", 9)
+label(286, SY - 22, ["GET /services"], 10.5, C_DISC, "middle")
+arrow(f"M 64,{SY} C 44,{SY-40} 44,{GY+GH+40} 62,{GY+GH+6}", C_DISC, (66, GY + GH), 300, 1.6,
+      "5 4", 8)
+label(50, VY + 30, ["GET", "/status"], 9.5, C_DISC, "middle")
 
 # services <-> Service Discovery, through the panel's left margin
-arrow(f"M {PX},470 C 322,470 318,478 307,483", C_DISC, (300, 486), 160, 1.6, "5 4", 9)
-label(400, 462, ["POST /register, with topics"], 10.5, C_DISC, "middle")
-arrow(f"M 300,424 C 322,424 320,392 333,390", C_DISC, (340, 389), 352, 1.6, "5 4", 9)
-label(398, 374, ["GET /status, every 5s"], 10.5, C_DISC, "middle")
+arrow(f"M {PX},{SY+70} C 322,{SY+70} 318,{SY+78} 307,{SY+83}", C_DISC, (300, SY + 86), 160,
+      1.6, "5 4", 9)
+label(400, SY + 62, ["POST /register, with topics"], 10.5, C_DISC, "middle")
+arrow(f"M 300,{SY+24} C 322,{SY+24} 320,{SY-8} 333,{SY-10}", C_DISC, (340, SY - 11), 352,
+      1.6, "5 4", 9)
+label(398, SY - 26, ["GET /status, every 5s"], 10.5, C_DISC, "middle")
 
 # broker -> Service Discovery
-arrow(f"M {BX},{BY+64} H 214 V 536", C_DISC, (214, 530), 270, 1.6, "5 4", 9)
-label(276, 602, ["GET /services", "GET /topics"], 10.5, C_DISC, "middle")
+arrow(f"M {BX},{BY+64} H 214 V {SY+SH+6}", C_DISC, (214, SY + SH), 270, 1.6, "5 4", 9)
+label(276, BY + 30, ["GET /services", "GET /topics"], 10.5, C_DISC, "middle")
 
 # every container -> Promtail
 arrow(f"M {PX+PW},{PY+76} H {MX+24}", C_TEL, (MX + 30, PY + 76), 0, 1.6, "2 4", 9)
@@ -281,20 +354,25 @@ label(MX - 24, PY + 64, ["stdout of every container"], 10.5, C_TEL, "middle")
 arrow(f"M {PX+PW},{MY+184} H {MX+274}", C_TEL, (MX + 280, MY + 184), 0, 1.6, "2 4", 9)
 label(MX - 24, MY + 172, ["spans"], 10.5, C_TEL, "middle")
 
-# Loki -> the Gateway: GET /logs reads the system's log from Loki. Round the
-# bottom of the drawing, clear of the services panel.
-arrow(f"M {MX+60},{MY+230} H {MX-10} V 740 H 24 V 262 H 34", C_TEL, (40, 262), 0, 1.6, "2 4", 9)
-label(700, 732, ["GET /logs on the Gateway reads from Loki what came through the broker"], 11, C_TEL, "middle")
+# Under the broker and the warehouse, three lines run the width of the drawing.
+YB0, YB1, YB2 = BY + BH + 22, BY + BH + 40, BY + BH + 58
 
 # The broker -> Loki: every service's lines, sent as LogBatch events on the
 # `logs` topic, written into Loki as source="broker".
-arrow(f"M {BX+BW},{BY+40} H {MX-22} V {MY+270} H {MX+54}", C_TEL, (MX + 60, MY + 270), 0, 1.6, "2 4", 9)
+arrow(f"M {BX+BW-40},{BY+BH} V {YB0} H {MX-22} V {MY+270} H {MX+54}", C_TEL,
+      (MX + 60, MY + 270), 0, 1.6, "2 4", 9)
 label(MX + 22, MY + 262, ["logs topic"], 10.5, C_TEL, "middle")
 
-# Service Discovery -> Prometheus
-# Up the panel's right margin and into Prometheus's side, clear of Tempo.
-arrow(f"M 118,530 V 756 H {MX+520} V {MY+95} H {MX+506}", C_TEL, (MX + 500, MY + 95), 180, 1.6, "2 4", 9)
-label(770, 756, ["GET /metrics  —  Service Discovery has already asked every instance for "
+# Loki -> the Gateway: GET /logs reads the system's log from Loki. Round the
+# bottom of the drawing, clear of the services panel.
+arrow(f"M {MX+60},{MY+230} H {MX-10} V {YB1} H 24 V 262 H 34", C_TEL, (40, 262), 0, 1.6, "2 4", 9)
+label(620, YB1 - 8, ["GET /logs on the Gateway reads from Loki what came through the broker"],
+      11, C_TEL, "middle")
+
+# Service Discovery -> Prometheus, round the right edge and into its side
+arrow(f"M 118,{SY+SH} V {YB2} H {W-24} V {MY+95} H {MX+506}", C_TEL, (MX + 500, MY + 95), 180,
+      1.6, "2 4", 9)
+label(770, YB2, ["GET /metrics  —  Service Discovery has already asked every instance for "
                  "GET /status, so one scrape covers the whole system"], 11, C_TEL, "middle")
 
 # The services panel's heading, last, so the WebSocket lines pass behind it.
@@ -304,8 +382,8 @@ label(PX + 186, PY + 26,
        "bottom row: deciding on one applicant"], 11.5, MUTED, "start")
 
 # ------------------------------------------------------------------ legend ---
-LY = 798
-rect(40, LY, W - 80, 142, "#FFFFFF", PANEL_S, r=10)
+LY = YB2 + 32
+rect(40, LY, W - 80, 196, "#FFFFFF", PANEL_S, r=10)
 text(64, LY + 30, "Reading the lines", 13, INK, "bold")
 
 legend = [
@@ -313,6 +391,8 @@ legend = [
     (C_WS, "7 5", 1.8, "WebSocket, straight to the service. The Gateway negotiates the URL, then stands aside."),
     (C_BROKER, None, 3.0, "Through the broker. The caller names an operation; the broker chooses the instance."),
     (C_DISC, "5 4", 1.6, "The registry. Who is running, who is still answering, which topics each one takes."),
+    (C_CACHE, None, 2.0, "The cache. The Gateway alone uses it; a node that stops answering leaves the ring."),
+    (C_DW, "8 4", 2.0, "The warehouse. The ETL reads every database's replicas; Grafana reads what it loaded."),
     (C_TEL, "2 4", 1.6, "Telemetry: logs, spans and metrics. Loki and Promtail always run; the rest only with the monitoring profile."),
 ]
 for i, (color, dash, sw, caption) in enumerate(legend):
@@ -323,9 +403,11 @@ for i, (color, dash, sw, caption) in enumerate(legend):
 
 text(952, LY + 30, "What is not drawn", 13, INK, "bold")
 notes = [
-    "Which service calls which. Five of those calls go through the broker now; the table in the README names each one, with its operation and transport.",
-    "The nine Compose networks: one per service, shared with its database alone, plus backend, where the Gateway, the broker and Service Discovery meet them.",
-    "Replicas past the default two. docker compose up -d --scale player=4 changes nothing here: an instance registers itself, and Promtail finds it.",
+    "Which service calls which. All but two go through the broker now; the table in the README names each one, with its operation and transport.",
+    "The saga's steps. Applicant creates each applicant by saga, through the broker's coordinator, into Credential, University Record and Applicant.",
+    "The networks: one per service with its database, backend where the Gateway, the broker and Service Discovery meet them, one for etcd, one for the warehouse.",
+    "Inside a database stack: three Patroni nodes and an HAProxy that asks each node's REST API which one is the primary.",
+    "The ETL registers and logs like a service. Replicas past the default two: an instance registers itself, and Promtail finds it.",
     "The Gateway never registers, because it is the thing that reads the registry. Service Discovery probes it anyway, through METRICS_EXTRA_INSTANCES.",
 ]
 for i, n in enumerate(notes):
@@ -334,9 +416,9 @@ for i, n in enumerate(notes):
 add("</svg>")
 
 here = pathlib.Path(__file__).resolve().parent
-png = here / "images" / "architecture-lab4.png"
+png = here / "images" / "architecture-lab5.png"
 
-# This file is the source; images/architecture-lab4.png is the only artifact
+# This file is the source; images/architecture-lab5.png is the only artifact
 # kept beside it. The SVG in between is written to a temporary directory and
 # thrown away, so there is never a second copy of the drawing to fall behind
 # this one. Drawn at 2x, because GitHub and a lab report both scale a large
@@ -344,7 +426,7 @@ png = here / "images" / "architecture-lab4.png"
 svg = "\n".join(out).replace(f'width="{W}" height="{H}"',
                              f'width="{W*2}" height="{H*2}"', 1)
 with tempfile.TemporaryDirectory() as tmp:
-    scratch = pathlib.Path(tmp) / "architecture-lab4.svg"
+    scratch = pathlib.Path(tmp) / "architecture-lab5.svg"
     scratch.write_text(svg)
     # sips ships with macOS; rsvg-convert or Inkscape would do as well.
     subprocess.run(["sips", "-s", "format", "png", str(scratch), "--out", str(png)],

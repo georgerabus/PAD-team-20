@@ -1,0 +1,759 @@
+{
+  "uid": "pad-warehouse",
+  "title": "PAD Team 20 — Warehouse",
+  "description": "What the system did, from the data warehouse the ETL loads every 5 minutes: decisions, impostors, shifts, players. No names, no free text.",
+  "tags": [
+    "pad-team-20",
+    "warehouse"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Shifts",
+      "description": "Shifts opened, in every state.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT count(*) FROM fact_shift",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Decisions",
+      "description": "Every moderator decision.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT count(*) FROM fact_decision",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Applicants",
+      "description": "Applicants whose creation completed.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT count(*) FROM fact_applicant",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Decision accuracy",
+      "description": "Share of decisions that matched the rules' verdict.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT round(100.0 * avg(correct::int), 1) FROM fact_decision",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Impostors let in",
+      "description": "Impostors a moderator accepted.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT count(*) FROM fact_decision d JOIN fact_applicant a USING (applicant_id) WHERE a.is_impostor AND d.action = 'accept'",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Last ETL run",
+      "description": "Status of the newest load. etl_runs at the bottom has every run.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT status FROM etl_runs ORDER BY started_at DESC LIMIT 1",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Decisions per day",
+      "description": "Right and wrong decisions, by day.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT date_trunc('day', decided_at) AS time,\n       count(*) FILTER (WHERE correct) AS correct,\n       count(*) FILTER (WHERE NOT correct) AS wrong\n  FROM fact_decision\n WHERE $__timeFilter(decided_at)\n GROUP BY 1 ORDER BY 1",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "What decisions turned out to be",
+      "description": "correct, or which mistake: a wrong admit, a wrong reject, a missed ban.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT outcome, count(*) AS decisions FROM fact_decision GROUP BY outcome",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "pieType": "donut",
+        "legend": {
+          "showLegend": true,
+          "placement": "right"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "barchart",
+      "title": "Impostors: caught or let in",
+      "description": "What moderators did with the applicants who were impostors.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 4,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT CASE WHEN d.action = 'accept' THEN 'let in' ELSE 'caught' END AS result,\n       count(*) AS impostors\n  FROM fact_decision d JOIN fact_applicant a USING (applicant_id)\n WHERE a.is_impostor GROUP BY 1 ORDER BY 1",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 10,
+      "type": "barchart",
+      "title": "Accuracy by what the applicant claimed to be",
+      "description": "How often moderators got it right, by the role the applicant claimed.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT a.claimed_role AS claimed_role,\n       round(100.0 * avg(d.correct::int), 1) AS accuracy\n  FROM fact_decision d JOIN fact_applicant a USING (applicant_id)\n GROUP BY 1 ORDER BY 2",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 11,
+      "type": "barchart",
+      "title": "Which deceptions work",
+      "description": "For each strategy impostors use: how many were let in, how many caught.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT a.deception_strategy AS strategy,\n       count(*) FILTER (WHERE d.action = 'accept') AS let_in,\n       count(*) FILTER (WHERE d.action <> 'accept') AS caught\n  FROM fact_decision d JOIN fact_applicant a USING (applicant_id)\n WHERE a.is_impostor GROUP BY 1 ORDER BY 2 DESC",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Claimed status against the university's record",
+      "description": "What applicants claimed, against what University Record says.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT a.claimed_university_status AS claimed,\n       r.enrollment_status AS on_record,\n       count(*) AS applicants\n  FROM fact_applicant a JOIN fact_applicant_record r USING (applicant_id)\n GROUP BY 1, 2 ORDER BY 3 DESC",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Shift scores",
+      "description": "Score and penalties of each finished shift.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT created_at AS time, score, penalties\n  FROM fact_shift\n WHERE status = 'ended' AND $__timeFilter(created_at)\n ORDER BY 1",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 8
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Players by level",
+      "description": "How many players are at each level.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT 'level ' || level AS level, count(*) AS players\n  FROM dim_player GROUP BY dim_player.level ORDER BY dim_player.level",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 15,
+      "type": "barchart",
+      "title": "Documents applicants carry",
+      "description": "Credentials by type.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 20,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT type, count(*) AS credentials FROM fact_credential GROUP BY type ORDER BY 2 DESC",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 16,
+      "type": "barchart",
+      "title": "Messages by channel",
+      "description": "Chat messages in each kind of channel. Never their text.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT c.channel_name AS channel, count(*) AS messages\n  FROM fact_message m JOIN dim_channel c USING (channel_id)\n GROUP BY 1 ORDER BY 2 DESC",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "ETL runs",
+      "description": "Every load: what started it, how it went, how many rows, and what failed.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pad-warehouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pad-warehouse"
+          },
+          "rawSql": "SELECT started_at, trigger, status,\n       (SELECT coalesce(sum(value::int), 0) FROM jsonb_each_text(rows)) AS rows,\n       round(extract(epoch FROM finished_at - started_at)::numeric, 2) AS seconds,\n       CASE WHEN failed = '{}'::jsonb THEN '' ELSE failed::text END AS failed\n  FROM etl_runs ORDER BY started_at DESC LIMIT 50",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    }
+  ]
+}

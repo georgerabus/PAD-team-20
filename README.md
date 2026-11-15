@@ -78,15 +78,20 @@ answering. It owns no database: the registry is held in memory.
 
 ## Architecture Diagram
 
-Lab 4 deployment topology. Every box is a container in `docker-compose.yml`:
+Lab 5 deployment topology. Every box is a container in `docker-compose.yml`:
 
-![Lab 4 deployment topology](docs/images/architecture-lab4.png)
+![Lab 5 deployment topology](docs/images/architecture-lab5.png)
 
-Five kinds of line, because the system now has five ways for one container to
-reach another: REST through the Gateway, a WebSocket straight to the service,
-a call through the Message Broker, registry traffic, and telemetry. The
-drawing is generated — `python3 docs/architecture-lab4.py` rebuilds the PNG
-from the layout in that file, so the diagram cannot quietly fall behind the
+Seven kinds of line, because the system now has seven ways for one container
+to reach another: REST through the Gateway, a WebSocket straight to the
+service, a call through the Message Broker, registry traffic, the cache, the
+warehouse, and telemetry. Since Lab 4, every database is a Patroni cluster
+behind HAProxy with etcd electing its primary ([Replicated
+databases](#replicated-databases)), the broker coordinates the applicant saga,
+the Gateway caches in three Valkey nodes ([Cache](#cache)), and the ETL loads
+the warehouse that Grafana reads ([Warehouse and ETL](#warehouse-and-etl)).
+The drawing is generated — `python3 docs/architecture-lab5.py` rebuilds the
+PNG from the layout in that file, so the diagram cannot quietly fall behind the
 Compose file it describes.
 
 What the picture does not say, and the sections below do: which service calls
@@ -120,8 +125,10 @@ flowchart LR
 Only Gateway publishes REST. Session and DM still validate Session tokens at
 their WS handshakes. Neither published WS port carries a REST route, so
 neither can be used to forge Gateway identity: Session answers `426` on a
-listener that serves upgrades alone, and the WS edge refuses anything that is
-not DM's upgrade path. Gateway negotiates their public URLs
+listener that serves upgrades alone, and Discord DMs publishes only its
+WebSocket listener, `3001`, never its REST port `3000`. (The Lab 2 WS edge
+above is gone: Discord DMs publishes that listener itself.) Gateway negotiates
+their public URLs
 using SESSION_PUBLIC_WS_BASE_URL and DM_PUBLIC_WS_BASE_URL. Read
 [integration status](docs/gateway-integration.md) for
 the image/client dependencies before treating this topology as a finished game.
@@ -918,7 +925,7 @@ these callers carries a circuit breaker of its own.
 | Discord DMs | Credential | `GetCredential` | gRPC 9001, through the broker | `GET /credentials/{id}` on `gateway:8001` |
 | Discord DMs | University Record | `GetRecord` | gRPC 9001, through the broker | `GET /records/*` on `gateway:8001` |
 | Gateway | Server Rules, University Record | `HttpRequest` | envelope on `POST /messages`, for the client requests it routes there | a direct call to one instance |
-| Player, Session, Gateway, Service Discovery (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
+| Player, Session, Gateway, Service Discovery, the ETL (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
 
 Most are requests with an answer; `SessionCompleted` is an event, queued by
 topic, retried, and parked as a dead letter if it never lands. `LogBatch` is an
@@ -1348,14 +1355,15 @@ check is not cached.
 `warehouse-db` is a PostgreSQL 17 database with a star schema, which Grafana
 reads. The `etl` service, in Python, loads it every 5 minutes and on
 `POST /etl/run`, which answers
-`200 {runId, startedAt, finishedAt, rows:{<table>:int}}` or `409 ETL_RUNNING`.
-Like every service, it publishes no port.
+`200 {runId, startedAt, finishedAt, rows:{<table>:int}}` (with `failed`, the
+tables not loaded and why, when a source could not be read), `409 ETL_RUNNING`
+while a run is going, or `503 WAREHOUSE_UNAVAILABLE`. Like every service, it
+publishes no port.
 
 The ETL reads each service's database on port `5433` of its usual host, the
 replicas, as the user `etl` (`pg_read_all_data`, password `ETL_DB_PASSWORD` in
 `.env`), so a load never weighs on a primary. It joins each database's network
-to do so. Until the replicated databases land, it reads today's databases on
-`5432` with each service's own user.
+to do so.
 
 Loading is incremental. For each table it reads the rows changed since the
 table's watermark minus one minute and inserts or updates them by primary key,
@@ -1368,7 +1376,7 @@ signatures), never anything that names or reaches a person, real or generated
 (names, usernames, emails, student IDs, messages, free text), and never a whole
 JSON document: the ETL takes out the fields it needs.
 
-**Every owner tells Part 4**, on the warehouse card, for each table the
+**Every owner tells Part 4**, in issue #106, for each table the
 warehouse needs: its primary key; the column that holds the time of the last
 change, or that it has none; whether rows are ever deleted; and the columns to
 copy, without the personal ones and the secrets. Incremental loading misses a
@@ -1376,10 +1384,49 @@ table without such a column and every deleted row (the saga's compensations
 delete from Credential and University Record), so such a table is loaded whole
 on every run, or left out.
 
+#### What the warehouse holds
+
+The ETL is its own service, [pad-etl-service](pad-etl-service/), image
+`catalinasiminiuc/pad-etl-service` (`ETL_IMAGE`); its README has every table
+with what it keeps and why. In short:
+
+| Facts | Dimensions |
+|---|---|
+| `fact_shift`, `fact_shift_player` (Session) | `dim_player`, `dim_team`, `bridge_team_member` (Player) |
+| `fact_decision` (Moderation) | `dim_channel` (Discord DMs) |
+| `fact_message` (Discord DMs, never the text) | `dim_rule_set` (Server Rules) |
+| `fact_applicant` (Applicant), `fact_credential` (Credential), `fact_applicant_record` (University Record) | `dim_date` |
+
+No table in the system had a column for the time of its last change except the
+Laravel services' `updated_at`, so Moderation's decisions and Discord DMs'
+channels and messages load by the time they were written (rows only ever
+added), Applicant and Server Rules by `updated_at`, and the rest — players,
+teams, shifts, and Credential and University Record, which the saga's
+compensations delete from — whole on every run. `etl_runs` records every run:
+what started it, how it went, rows per table, the watermarks, and what could
+not be read.
+
+Nothing personal or secret is copied: no username, email, password hash, name,
+student ID, document contents, signature, message text, or whole JSON
+document. The ETL's tests check it on every build, against sample databases
+whose every personal value is marked.
+
+Run a load now, from inside the network:
+
+```bash
+docker compose exec etl python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/etl/run', method='POST')).read().decode())"
+```
+
+Grafana reads the warehouse as `grafana_reader`, created when `warehouse-db`
+first starts and allowed to read and nothing else: the *PAD Team 20 —
+Warehouse* dashboard.
+
 ## Running the System
 
 The common `docker-compose.yml` starts Gateway, Service Discovery, the Message
-Broker, the eight domain services, their separate PostgreSQL databases and a WS-only edge.
+Broker, the eight domain services, each one's database as a three-node Patroni
+cluster behind HAProxy, the three etcd nodes they share, Loki and Promtail, and
+the data warehouse with its ETL.
 Service Discovery publishes no port. Domain REST ports and
 all database ports stay private. Client REST uses `http://127.0.0.1:8080` and
 the prefixes `/player`, `/session`, `/applicant`, `/credential`, `/rules`,
@@ -1395,7 +1442,8 @@ counted without anyone delivering the event by hand. See
 
 ### What you need
 
-- Docker with Compose
+- Docker with Compose, and more than 4 GB of memory for Docker: the whole stack
+  is over fifty containers, and in 4 GB its databases did not stay healthy
 - OpenSSL, to generate the Player and Session signing keys
 - The published image references for Gateway, Server Rules and University
   Record that `.env.example` lists
@@ -1581,6 +1629,7 @@ runtime registers and stopped ones drop out.
 | Gateway | [`augustinploteanu/pad-gateway-service`](https://hub.docker.com/r/augustinploteanu/pad-gateway-service) |
 | Service Discovery | [`georgerabus/pad-service-discovery`](https://hub.docker.com/r/georgerabus/pad-service-discovery) |
 | Message Broker | [`georgerabus/pad-message-broker`](https://hub.docker.com/r/georgerabus/pad-message-broker) |
+| ETL | [`catalinasiminiuc/pad-etl-service`](https://hub.docker.com/r/catalinasiminiuc/pad-etl-service) |
 
 Images are tagged `username/service-name:version`, with the version following
 the same scheme as the repository tags below. `docker-compose.yml` pins an exact
@@ -1610,8 +1659,8 @@ docker compose --profile monitoring up -d
 ```
 
 Grafana is then at **http://localhost:3300**, opening on *PAD Team 20 —
-System Overview*, with the *PAD Team 20 — Logs* dashboard beside it and all
-three data sources connected. There is no login: it is a page of counts and container names on a
+System Overview*, with the *PAD Team 20 — Logs* and *PAD Team 20 — Warehouse*
+dashboards beside it and all four data sources connected. There is no login: it is a page of counts and container names on a
 developer's own machine, and the port is bound to the loopback address.
 
 Stop them again without touching the system:
@@ -1716,6 +1765,13 @@ impostor. Details in [docs/logging-and-tracing.md](docs/logging-and-tracing.md).
 one request across every service by the trace id pasted into its box, every
 error with its stack, and the full collection filtered by service and level.
 
+*PAD Team 20 — Warehouse* is what the system did, read from the data
+warehouse: decisions per day and how they turned out, moderators' accuracy by
+what the applicant claimed to be, impostors caught or let in and which
+deceptions work, claimed status against the university's record, shift
+scores, players by level, the documents applicants carry, messages per
+channel, and every ETL run.
+
 Under a load test driving Player past its limit, the dashboard shows both
 replicas at 98% and 100% of their own limits, two instances flagged as
 critically loaded, and the Gateway's status mix shifting to mostly `429`
@@ -1729,8 +1785,11 @@ with `408` and `503` appearing behind it.
 | `LOGS_TOKEN` | *(empty)* | The operator token for the Gateway's `GET /logs`. Empty, the download refuses every request |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4318` in `.env.example` | Where the services send spans. Empty, trace ids are still made and logged; only the export is off |
 | `METRICS_EXTRA_INSTANCES` | `gateway=http://gateway:8000` | Instances watched for metrics without registering |
+| `WAREHOUSE_DB_PASSWORD` | *(required)* | The warehouse's owner, which the ETL writes with |
+| `WAREHOUSE_GRAFANA_PASSWORD` | *(required)* | `grafana_reader`, which the Warehouse data source reads with |
+| `ETL_INTERVAL_SECONDS` | `300` | How often the ETL loads the warehouse |
 
-Both dashboards, the three data sources, and the Prometheus, Loki, Promtail
+The three dashboards, the four data sources, and the Prometheus, Loki, Promtail
 and Tempo configuration all live in [monitoring/](monitoring/) and are provisioned on
 startup. Edits made in the Grafana UI are not written back: change the JSON
 there, or export from Grafana and replace the file.
