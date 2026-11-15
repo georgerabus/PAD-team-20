@@ -953,9 +953,13 @@ transaction open at that moment is lost, and so is the request it belonged to.
 ```
 
 That is a query that fails on a connection error (SQLSTATE class `08`), on a
-server shutting down or starting up (`57P01`, `57P02`, `57P03`) or on a server
-that is read only (`25006`). Through the broker it is a reply with status
-`503`, or `UNAVAILABLE` with `x-error: DEPENDENCY_UNAVAILABLE` over gRPC.
+server shutting down or starting up (`57P01`, `57P02`, `57P03`), on a server
+that is read only (`25006`), or on a connection that drops in the middle of
+it, as HAProxy drops them on a failover. That last one has no SQLSTATE from
+the server (PHP's PDO reports `HY000`), so it is known by the client library's
+message, as Laravel's `LostConnectionDetector` does. Through the broker it is
+a reply with status `503`, never stored as the message's reply, or
+`UNAVAILABLE` with `x-error: DEPENDENCY_UNAVAILABLE` over gRPC.
 
 The failure is the database's, not the instance's, and every instance of the
 service shares that database, so the code never counts against an instance.
