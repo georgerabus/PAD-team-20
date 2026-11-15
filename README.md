@@ -78,15 +78,20 @@ answering. It owns no database: the registry is held in memory.
 
 ## Architecture Diagram
 
-Lab 4 deployment topology. Every box is a container in `docker-compose.yml`:
+Lab 5 deployment topology. Every box is a container in `docker-compose.yml`:
 
-![Lab 4 deployment topology](docs/images/architecture-lab4.png)
+![Lab 5 deployment topology](docs/images/architecture-lab5.png)
 
-Five kinds of line, because the system now has five ways for one container to
-reach another: REST through the Gateway, a WebSocket straight to the service,
-a call through the Message Broker, registry traffic, and telemetry. The
-drawing is generated — `python3 docs/architecture-lab4.py` rebuilds the PNG
-from the layout in that file, so the diagram cannot quietly fall behind the
+Seven kinds of line, because the system now has seven ways for one container
+to reach another: REST through the Gateway, a WebSocket straight to the
+service, a call through the Message Broker, registry traffic, the cache, the
+warehouse, and telemetry. Since Lab 4, every database is a Patroni cluster
+behind HAProxy with etcd electing its primary ([Replicated
+databases](#replicated-databases)), the broker coordinates the applicant saga,
+the Gateway caches in three Valkey nodes ([Cache](#cache)), and the ETL loads
+the warehouse that Grafana reads ([Warehouse and ETL](#warehouse-and-etl)).
+The drawing is generated — `python3 docs/architecture-lab5.py` rebuilds the
+PNG from the layout in that file, so the diagram cannot quietly fall behind the
 Compose file it describes.
 
 What the picture does not say, and the sections below do: which service calls
