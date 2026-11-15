@@ -228,7 +228,7 @@ services:
     networks: [player, dcs]
 
   player:
-    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:4.0.0}
+    image: ${PLAYER_IMAGE:-catalinasiminiuc/pad-player-service:5.0.0-rc.1}
     depends_on:
       player-db:
         condition: service_healthy
