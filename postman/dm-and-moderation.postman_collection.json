@@ -1636,6 +1636,198 @@
           }
         }
       ]
+    },
+    {
+      "name": "7. The Gateway's cache",
+      "description": "Lab 5. The Gateway keeps GET answers in three Valkey nodes, sharded by its own consistent-hashing ring, and says X-Cache: HIT or MISS on every GET. A read is kept per caller for its max-age or 30 seconds, unless the service marks it Cache-Control: no-store; any write to a service answered 2xx invalidates every entry kept for it. See the CPR README, \"Cache\".",
+      "item": [
+        {
+          "name": "A cacheable read: the team",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('says whether it came from the cache', () => pm.expect(pm.response.headers.get('X-Cache')).to.be.oneOf(['HIT', 'MISS']));",
+                  "pm.collectionVariables.set('cachedTeam', pm.response.text());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": "{{gatewayBaseUrl}}/player/teams/{{teamId}}"
+          }
+        },
+        {
+          "name": "The same read again comes from the cache",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: HIT', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('HIT'));",
+                  "pm.test('the same answer', () => pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('cachedTeam')));",
+                  "pm.test('with the seconds since it was kept', () => pm.expect(Number(pm.response.headers.get('Age'))).to.be.at.least(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": "{{gatewayBaseUrl}}/player/teams/{{teamId}}"
+          }
+        },
+        {
+          "name": "A write to Player, answered 2xx",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('cacheUser', 'cache' + Date.now().toString(36));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayBaseUrl}}/player/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{cacheUser}}\",\n  \"email\": \"{{cacheUser}}@utm.md\",\n  \"password\": \"correcthorse1\"\n}"
+            }
+          }
+        },
+        {
+          "name": "The team read after that write is fetched again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: MISS', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('MISS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "url": "{{gatewayBaseUrl}}/player/teams/{{teamId}}"
+          }
+        },
+        {
+          "name": "Discord DMs' channel history is never kept (no-store)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('marked no-store, through the broker', () => pm.expect(pm.response.headers.get('Cache-Control')).to.include('no-store'));",
+                  "pm.test('X-Cache: MISS', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('MISS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": "{{gatewayBaseUrl}}/dm/channels/{{generalChannelId}}/messages?limit=5"
+          }
+        },
+        {
+          "name": "Read again, it still reaches Discord DMs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: MISS', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('MISS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorSessionToken}}"
+              }
+            ],
+            "url": "{{gatewayBaseUrl}}/dm/channels/{{generalChannelId}}/messages?limit=5"
+          }
+        },
+        {
+          "name": "The Gateway's own refusal says MISS too",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('X-Cache: MISS', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('MISS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayBaseUrl}}/dm/channels/{{generalChannelId}}/messages?limit=5"
+          }
+        }
+      ]
     }
   ]
 }

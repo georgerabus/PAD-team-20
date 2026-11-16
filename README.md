@@ -836,6 +836,10 @@ only.
 | `POST /channels/{id}/messages` `[REST]` | `{content}` or `{share: Share}` | `201 Message` \| `403` |
 | `WS /ws?sessionId=&token=` `[WS]` | — | see below |
 
+Both GETs answer `Cache-Control: no-store`, so the Gateway never caches them:
+messages also arrive over the WebSocket, and which channels a player sees
+follows their channel access in Session. Neither change passes the Gateway.
+
 ```json
 // Share — what to pull into the channel
 { "applicantId":"UUID",
@@ -858,8 +862,12 @@ server → client:
 ```json
 { "type":"message", "channelId":"UUID", "authorId":"UUID", "content":"string|null", "attachment":"object|null", "ts":"timestamp" }
 { "type":"presence", "channelId":"UUID", "online":["UUID"] }
-{ "type":"error", "code":"enum(CHANNEL_ACCESS_DENIED|SHARE_DENIED)" }
+{ "type":"error", "code":"enum(CHANNEL_ACCESS_DENIED|SHARE_DENIED|DEPENDENCY_UNAVAILABLE)" }
 ```
+
+`DEPENDENCY_UNAVAILABLE` means the database could not be reached for that
+frame, during a failover: the frame is lost, the socket stays open, and the
+client may send it again.
 
 ### Service Discovery
 
@@ -924,7 +932,9 @@ these callers carries a circuit breaker of its own.
 | Moderation | Server Rules | `GetCurrentRuleSet`, `Evaluate` | gRPC 9001, through the broker | `GET /rules/current`, `POST /rules/evaluate` on `gateway:8001` |
 | Discord DMs | Credential | `GetCredential` | gRPC 9001, through the broker | `GET /credentials/{id}` on `gateway:8001` |
 | Discord DMs | University Record | `GetRecord` | gRPC 9001, through the broker | `GET /records/*` on `gateway:8001` |
-| Gateway | Server Rules, University Record | `HttpRequest` | envelope on `POST /messages`, for the client requests it routes there | a direct call to one instance |
+| Moderation | Session | `ReportOutcome` | gRPC 9001, through the broker | `POST /sessions/{id}/outcomes` on `gateway:8001` |
+| Discord DMs | Session | `CheckChannelAccess` | gRPC 9001, through the broker | `GET /sessions/{id}/access-check` on `gateway:8001` |
+| Gateway | Server Rules, University Record, Discord DMs, Moderation (`BROKER_SERVICES`) | `HttpRequest` | envelope on `POST /messages`, for the client requests it routes there | a direct call to one instance |
 | Player, Session, Gateway, Service Discovery, the ETL (and the broker's own lines) | the broker itself | `LogBatch` | event on topic `logs`, written into Loki | each instance's own `GET /logs`, collected by Service Discovery |
 
 Most are requests with an answer; `SessionCompleted` is an event, queued by
@@ -950,17 +960,17 @@ answer differently, because only one of them decides anything.
 
 ### Service-to-service calls
 
-Two calls are still synchronous REST through the Gateway's internal port
-8001. Session already serves both as broker operations (`ReportOutcome` and
-`CheckChannelAccess`, since Session 4.0.0-rc.3); they move when Moderation and
-Discord DMs switch to them. There is no fallback between the two ways: a call
-that moved to the broker fails as a broker call, and does not quietly retry
-itself over REST.
+The last two synchronous REST calls through the Gateway's internal port 8001,
+Moderation reporting a decision to Session and Discord DMs checking channel
+access, moved onto the broker in Lab 4, as Session's `ReportOutcome` and
+`CheckChannelAccess` (see the table above). There is no fallback between the
+two ways: a call that moved to the broker fails as a broker call, and does not
+quietly retry itself over REST.
 
-| Caller | Callee | Purpose | Moves to |
-|---|---|---|---|
-| Moderation | Session | `POST /sessions/{id}/outcomes` — report the decision | `ReportOutcome` |
-| Discord DMs | Session | `GET /sessions/{id}/access-check` — enforce channel access | `CheckChannelAccess` |
+Discord DMs and Moderation still name `*_URL` addresses on `gateway:8001`,
+only as a REST fallback that the `*_GRPC_ADDRESS` settings switch off. What
+else still calls `gateway:8001` is tracked in #92; the Gateway's internal
+listener is removed once nothing does.
 
 ### Replicated databases
 
@@ -1350,6 +1360,72 @@ valid token, for 30 seconds and never past the token's `exp`. The key is a
 hash, so Valkey never holds a token that could be used. A token that fails the
 check is not cached.
 
+**What the Gateway adds to this** (5.0.0-rc.1; the details are in the
+[Gateway's README](pad-gateway-service/README.md#cache)):
+
+- A generation that is missing, the first time, after its node was emptied or
+  after it was evicted, starts from the clock in microseconds. It is then
+  above every value it had before, so an entry kept under an old value is
+  never found again.
+- A node that does not answer within 0.25 seconds leaves the ring
+  (`CACHE_NODE_DOWN` in the Gateway's log). It is asked `PING` every 5 seconds
+  and, once it answers, is emptied before it joins again (`CACHE_NODE_UP`):
+  what it held may have gone stale while it was out.
+- `Cache-Control: no-cache` is treated like `no-store`. A `HIT` also carries
+  `Age`, the seconds since the entry was kept.
+- Every method other than GET counts as a write, `HEAD` and `OPTIONS`
+  included.
+- Behind the broker, the `HttpRequest` reply keeps `cache-control` among its
+  headers, so `no-store` and `max-age` reach the Gateway the same way.
+
+Marked `no-store` already, for example: Player's profile and progression,
+Session's shift state and current applicant, and Discord DMs' channel list and
+channel history. Server Rules' `GET /rules/current?sessionId=` changes through
+the broker too, and needs it.
+
+**Why a ring and not `hash % N`.** A key that changes node is a miss, and the
+copy on its old node is dead weight until it expires. The Gateway's
+`tools/key_movement.py` counts the keys that move, for 100 000 keys on three
+nodes:
+
+| Change | The ring | `hash % N` | Least possible |
+|---|---|---|---|
+| A fourth node added | 29.4% | 75.2% | 25.0% |
+| One of three lost | 34.2% | 66.5% | 33.3% |
+
+When a node is lost, the ring moves only that node's keys; `hash % N` also
+moves 33 232 keys whose node is still up. The 160 points per node keep the
+shares even: with one point each, the three nodes held between 1.3% and 76.4%
+of the keys, with 160 between 32.2% and 34.2%.
+
+**Redis Cluster** places keys differently: each key falls in one of 16384 hash
+slots (`CRC16(key) mod 16384`), and the cluster assigns every slot to a primary
+in a table all its nodes share. Adding a node moves nothing until slots are
+resharded to it, key by key, while clients follow `MOVED` and `ASK`
+redirects; a lost primary is replaced by its replica. That keeps every key
+reachable, which data needs and a cache does not: here an entry lost with a
+node is only a miss, so the ring needs no replicas, no slot moves and no
+cluster-aware client. The Gateway's README compares the two point by point.
+
+**Seeing it work**, from the common project:
+
+```bash
+# A cacheable GET twice: MISS, then HIT. TOKEN is a player token, from
+# POST /player/auth/login; TEAM is a team the player belongs to.
+for i in 1 2; do curl -s -o /dev/null -D - -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:8080/player/teams/$TEAM | grep -iE "^x-cache|^age"; done
+# What one node holds: entries, generations and token claims.
+docker compose exec valkey-1 valkey-cli --scan --pattern 'gw:*'
+# Lose a node while requests come in: each still answers. The Gateway notices
+# the node on its next use and logs it; once it is back, it rejoins, emptied,
+# within 5 seconds.
+docker compose stop valkey-2
+docker compose start valkey-2
+docker compose logs gateway | grep CACHE_NODE
+# The keys that move, from the Gateway's repository:
+python tools/key_movement.py
+```
+
 ### Warehouse and ETL
 
 `warehouse-db` is a PostgreSQL 17 database with a star schema, which Grafana
@@ -1590,10 +1666,12 @@ caller sets and internal paths are refused on the published port.
 `postman/dm-and-moderation.postman_collection.json` runs one shift through
 Discord DMs and Moderation with real tokens, checks DM's and Session's
 WebSocket ports (`426`, `401`, `403`), and saves `dmSocketUrl` and
-`sessionSocketUrl` for a live demo in Postman. Its last folder covers Lab 4:
-both services' topics and `GET /logs`, the same calls sent to the broker as
-`HttpRequest` envelopes, and a `RulesUpdated` event sent twice. It runs inside
-the Docker network:
+`sessionSocketUrl` for a live demo in Postman. Folder 6 covers Lab 4: both
+services' topics and `GET /logs`, the same calls sent to the broker as
+`HttpRequest` envelopes, and a `RulesUpdated` event sent twice. Folder 7 covers
+the Gateway's cache: a read kept and answered `HIT`, a write to the service
+that makes the next read a `MISS`, Discord DMs' `no-store` history never kept,
+and `X-Cache` on the Gateway's own `401`. It runs inside the Docker network:
 
 ```bash
 docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \

@@ -67,6 +67,23 @@ x-etcd-environment: &etcd-environment
   ETCD_INITIAL_CLUSTER_STATE: new
   ETCD_INITIAL_CLUSTER_TOKEN: pad-team-20
 
+# The Gateway's cache: three Valkey nodes, which the Gateway shards itself by a
+# consistent-hashing ring. They keep nothing on disk (/data is a tmpfs, so no
+# volume is left behind either) and evict the least recently used keys when
+# full: losing a node loses only cache. Only the Gateway reaches them, on the
+# cache network. See the CPR README, "Cache".
+x-valkey: &valkey
+  image: ${VALKEY_IMAGE:-valkey/valkey:8.1.4-alpine}
+  command: [valkey-server, --save, "", --appendonly, "no", --maxmemory, 64mb, --maxmemory-policy, allkeys-lru]
+  tmpfs: [/data]
+  networks: [cache]
+  healthcheck:
+    test: [CMD, valkey-cli, ping]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+  restart: unless-stopped
+
 services:
   # ---- etcd: where every Patroni cluster keeps its leader lock ----
   etcd-1:
@@ -94,6 +111,11 @@ services:
       ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-3:2380
     volumes: [etcd-3-data:/etcd-data]
 
+  # ---- Valkey: the Gateway's cache ----
+  valkey-1: *valkey
+  valkey-2: *valkey
+  valkey-3: *valkey
+
   gateway:
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE to a published Gateway repository:tag}
     environment:
@@ -114,6 +136,9 @@ services:
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
       MAX_CONCURRENT_INTERNAL_REQUESTS: ${GATEWAY_MAX_CONCURRENT_INTERNAL_REQUESTS:-100}
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
+      # The cache. The Gateway does not wait for these nodes: one that does not
+      # answer only leaves its ring, and requests go to the services.
+      VALKEY_NODES: valkey-1:6379,valkey-2:6379,valkey-3:6379
       # GET /logs on the public port is the whole system's log, read from
       # Loki. It takes this operator token in X-Logs-Token rather than a
       # player's: the lines carry what no player may see, such as which
@@ -128,7 +153,7 @@ services:
       - ${PAD_KEYS_DIR:-./keys}/session/public.pem:/app/keys/session-public.pem:ro
     ports:
       - "127.0.0.1:${GATEWAY_HTTP_PORT:-8080}:8000"
-    networks: [backend]
+    networks: [backend, cache]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/up', timeout=2)"]
       interval: 3s
@@ -374,7 +399,7 @@ services:
     networks: [dm, dcs]
 
   dm-service:
-    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:4.5.0}
+    image: ${DM_IMAGE:-augustinploteanu/pad-dm-service:5.0.0-rc.1}
     depends_on:
       dm-db:
         condition: service_healthy
@@ -469,7 +494,7 @@ services:
     networks: [moderation, dcs]
 
   moderation-service:
-    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:4.5.0}
+    image: ${MODERATION_IMAGE:-augustinploteanu/pad-moderation-service:5.0.0-rc.1}
     depends_on:
       moderation-db:
         condition: service_healthy
@@ -577,6 +602,7 @@ services:
       timeout: 3s
       retries: 5
     networks: [server-rules, backend]
+    restart: unless-stopped
   # university-record-db is the HAProxy in front of the university-record-db-1..3 cluster: 5432 the primary, 5433 the replicas.
   university-record-db:
     <<: *postgres-ha-proxy
@@ -639,6 +665,7 @@ services:
       timeout: 3s
       retries: 5
     networks: [university-record, backend]
+    restart: unless-stopped
 
   # ---- Applicant Service ----
   # applicant-db is the HAProxy in front of the applicant-db-1..3 cluster: 5432 the primary, 5433 the replicas.
@@ -921,6 +948,8 @@ networks:
   moderation:
   dcs:
   warehouse:
+  # The Gateway and the Valkey nodes, and nothing else.
+  cache:
 
 volumes:
   broker-data:
