@@ -85,11 +85,14 @@ Lab 5 deployment topology. Every box is a container in `docker-compose.yml`:
 Seven kinds of line, because the system now has seven ways for one container
 to reach another: REST through the Gateway, a WebSocket straight to the
 service, a call through the Message Broker, registry traffic, the cache, the
-warehouse, and telemetry. Since Lab 4, every database is a Patroni cluster
-behind HAProxy with etcd electing its primary ([Replicated
-databases](#replicated-databases)), the broker coordinates the applicant saga,
-the Gateway caches in three Valkey nodes ([Cache](#cache)), and the ETL loads
-the warehouse that Grafana reads ([Warehouse and ETL](#warehouse-and-etl)).
+warehouse, and telemetry. What Lab 5 added carries an orange **LAB 5** tag:
+every database is a Patroni cluster, a primary and two replicas behind HAProxy,
+with etcd electing the primary ([Replicated databases](#replicated-databases)),
+the broker coordinates the applicant saga, the Gateway caches in three Valkey
+nodes ([Cache](#cache)), and the ETL loads the warehouse that Grafana reads
+([Warehouse and ETL](#warehouse-and-etl)). No service calls another through the
+Gateway's internal port any more: the calls between services, and the client
+requests for the services in `BROKER_SERVICES`, go through the broker.
 The drawing is generated — `python3 docs/architecture-lab5.py` rebuilds the
 PNG from the layout in that file, so the diagram cannot quietly fall behind the
 Compose file it describes.
