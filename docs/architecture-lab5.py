@@ -105,6 +105,16 @@ def label(x, y, lines, size=11.5, fill=None, anchor="middle", font=FONT, weight=
 
 
 
+NEW_F = "#EA580C"
+
+
+def tag(x, y, s="LAB 5"):
+    """A small filled tag on what Lab 5 added."""
+    w = len(s) * 6.4 + 12
+    add(f'<rect x="{x}" y="{y}" width="{w:.1f}" height="16" rx="8" ry="8" fill="{NEW_F}"/>')
+    text(x + w / 2, y + 11.5, s, 9, "#FFFFFF", "bold", "middle")
+
+
 # ---------------------------------------------------------------- canvas ----
 add(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
     f'viewBox="0 0 {W} {H}">')
@@ -137,6 +147,7 @@ rect(VX, VY, VW, VH, CACHE_F, CACHE_S, r=7)
 text(VX + VW / 2, VY + 22, "Valkey", 13, CACHE_T, "bold", "middle")
 text(VX + VW / 2, VY + 38, "valkey-1 · valkey-2 · valkey-3", 9.5, INK, "normal", "middle", MONO)
 text(VX + VW / 2, VY + 52, "allkeys-lru · nothing on disk", 9.5, MUTED, "normal", "middle")
+tag(VX + 8, VY - 9)
 
 SY, SH = 470, 130
 rect(40, SY, 260, SH, PLAT_F, PLAT_S)
@@ -179,31 +190,39 @@ for by, cells in ROWS:
         text(cx + CW / 2, by + 25, name, 13, SVC_T, "bold", "middle")
         text(cx + CW / 2, by + 42, blurb, 10, MUTED, "normal", "middle")
         text(cx + CW - 10, by + 56, "× 2", 10, SVC_S, "bold", "end")
-        # The database: three Patroni nodes behind one HAProxy, drawn as one
-        # stack, like a service's replicas.
-        dy = by + 92
-        line(f"M {cx+CW/2},{by+69} V {dy}", DB_S, 1.2)
-        cylinder(cx + 28 + 7, dy + 7, CW - 56, 48, "#FFFFFF", DB_S, 1)
-        cylinder(cx + 28 + 3.5, dy + 3.5, CW - 56, 48, "#FFFFFF", DB_S, 1)
-        cylinder(cx + 28, dy, CW - 56, 48, DB_F, DB_S)
-        text(cx + CW / 2, dy + 32, db, 10, DB_T, "normal", "middle", MONO)
-        text(cx + CW / 2, dy + 72, "Patroni × 3 · HAProxy", 9.5, FAINT, "normal", "middle")
+        # The database: HAProxy under the old host name, in front of three
+        # Patroni nodes, the primary and two replicas.
+        hy = by + 84
+        line(f"M {cx+CW/2},{by+69} V {hy}", DB_S, 1.2)
+        rect(cx + 20, hy, CW - 40, 22, "#FFFFFF", NEW_F, r=11, sw=1.3)
+        text(cx + CW / 2, hy + 15, db, 10, DB_T, "normal", "middle", MONO)
+        cy = hy + 44
+        for i, (role, fill, stroke) in enumerate((("primary", DB_F, DB_T),
+                                                  ("replica", "#FFFFFF", DB_S),
+                                                  ("replica", "#FFFFFF", DB_S))):
+            x0 = cx + 14 + i * 52
+            line(f"M {cx+CW/2},{hy+22} V {hy+30} H {x0+22} V {cy}", DB_S, 1)
+            cylinder(x0, cy, 44, 34, fill, stroke, 1.6 if i == 0 else 1.1)
+            text(x0 + 22, cy + 46, role, 9, DB_T if i == 0 else FAINT,
+                 "bold" if i == 0 else "normal", "middle")
         svc[name] = (cx, by, CW, 62)
 
-text(PX + 20, PY + PH - 34,
+tag(PX + 20, PY + PH - 46)
+text(PX + 74, PY + PH - 34,
      "Each database: Patroni, a primary and two replicas, one of them synchronous; HAProxy under "
      "the old name — 5432 primary, 5433 replicas", 10.5, FAINT)
-text(PX + 20, PY + PH - 16,
+text(PX + 74, PY + PH - 16,
      "a service and its database share a private network  ·  two replicas of each service "
      "by default", 10.5, FAINT)
 
 # etcd: the three members every Patroni node keeps its lease in.
-EX, EY, EW, EH = PX + PW - 196, PY + PH - 62, 176, 44
+EX, EY, EW, EH = PX + PW - 196, PY + PH - 56, 176, 42
 rect(EX + 6, EY + 6, EW, EH, "#FFFFFF", DB_S, r=7, sw=1)
 rect(EX + 3, EY + 3, EW, EH, "#FFFFFF", DB_S, r=7, sw=1)
 rect(EX, EY, EW, EH, DB_F, DB_S, r=7)
 text(EX + EW / 2, EY + 19, "etcd × 3", 12, DB_T, "bold", "middle")
 text(EX + EW / 2, EY + 35, "elects each cluster's primary", 9.5, MUTED, "normal", "middle")
+tag(EX + EW - 52, EY - 7)
 
 # ----------------------------------------------------------------- broker ---
 BX, BY, BW, BH = 340, PY + PH + 52, 600, 136
@@ -214,6 +233,7 @@ text(BX + 28, BY + 82, "one queue per topic · retries · dead letters", 11.5, M
 text(BX + 28, BY + 102, "picks the instance, gives up on a failing one", 10.5, MUTED)
 text(BX + 28, BY + 122, "saga coordinator: POST /sagas · GET /sagas/{id}", 10.5, BRK_T,
      "normal", "start", MONO)
+tag(BX + 346, BY + 110)
 cylinder(BX + BW - 150, BY + 24, 120, 76, "#FFFFFF", BRK_S)
 text(BX + BW - 90, BY + 66, "broker-data", 10, BRK_T, "normal", "middle", MONO)
 text(BX + BW - 90, BY + 118, "queues and sagas", 10, FAINT, "normal", "middle")
@@ -225,6 +245,7 @@ text(BX + BW - 90, BY + 131, "survive a restart", 10, FAINT, "normal", "middle")
 WX, WY, WW, WH = 980, BY, 290, 136
 rect(WX, WY, WW, WH, DW_F, DW_S, r=12)
 text(WX + WW - 16, WY + 24, "Data warehouse", 14, DW_T, "bold", "end")
+tag(WX + 16, WY + 12)
 
 ETL = (WX + 16, WY + 38, 124, 66)
 rect(*ETL, "#FFFFFF", DW_S, r=8)
@@ -301,12 +322,16 @@ arrow(f"M 272,112 C 430,66 580,74 {dx},{PY+56}", C_WS, (dx + 4, PY + 60), 68, 1.
 label(398, 150, ["WS 3011-3013"], 11, C_WS, "middle")
 label(640, 86, ["WS 3002-3004"], 11, C_WS, "middle")
 
-# Gateway -> services, and back in through the internal listener: the calls
-# between services that did not move to the broker are still REST through 8001.
+# Gateway -> services. No service calls another through the Gateway's internal
+# port any more: every call between services goes through the broker.
 arrow("M 300,242 H 442", C_REST, (450, 242), 0, 3.2, size=12)
 label(376, 230, ["REST · to one instance"], 10.5, C_REST, "middle")
-arrow("M 450,288 H 308", C_REST, (300, 288), 180, 2.0)
-label(378, 308, ["internal 8001", "service to service"], 10.5, C_REST, "middle")
+
+# Gateway -> broker: the client requests for the services in BROKER_SERVICES
+# travel as HttpRequest envelopes. Down the gap left of the services panel.
+arrow(f"M 300,296 H 322 V {BY+20} H {BX-6}", C_BROKER, (BX, BY + 20), 0, 2.4, size=10)
+label(332, PY + PH + 21, ["client requests for Rules, Records,", "DMs, Moderation: HttpRequest"],
+      10, C_BROKER, "start")
 
 # Gateway -> Valkey: GET answers and verified tokens, on the Gateway's ring
 arrow(f"M 170,{GY+GH} V {VY-6}", C_CACHE, (170, VY), 90, 2.0, size=9)
@@ -329,7 +354,7 @@ label(MX + 48, MY + 560, ["read as", "grafana_reader"], 10, C_DW, "start")
 
 # Gateway <-> Service Discovery, past the cache on its right
 arrow(f"M 286,{GY+GH} V {SY-6}", C_DISC, (286, SY), 90, 1.6, "5 4", 9)
-label(286, SY - 22, ["GET /services"], 10.5, C_DISC, "middle")
+label(266, SY - 22, ["GET /services"], 10.5, C_DISC, "middle")
 arrow(f"M 64,{SY} C 44,{SY-40} 44,{GY+GH+40} 62,{GY+GH+6}", C_DISC, (66, GY + GH), 300, 1.6,
       "5 4", 8)
 label(50, VY + 30, ["GET", "/status"], 9.5, C_DISC, "middle")
@@ -385,6 +410,8 @@ label(PX + 186, PY + 26,
 LY = YB2 + 32
 rect(40, LY, W - 80, 196, "#FFFFFF", PANEL_S, r=10)
 text(64, LY + 30, "Reading the lines", 13, INK, "bold")
+tag(220, LY + 18)
+text(272, LY + 30, "marks what Lab 5 added", 11, INK)
 
 legend = [
     (C_REST, None, 3.0, "REST, synchronous. The Gateway picks one instance of the service it routes to."),
@@ -400,13 +427,15 @@ for i, (color, dash, sw, caption) in enumerate(legend):
     line(f"M 64,{ly} H 118", color, sw, dash)
     head(126, ly, 0, color, 9)
     text(142, ly + 4, caption, 11, INK)
+    if color in (C_CACHE, C_DW):
+        tag(596, ly - 8)
 
 text(952, LY + 30, "What is not drawn", 13, INK, "bold")
 notes = [
-    "Which service calls which. All but two go through the broker now; the table in the README names each one, with its operation and transport.",
+    "Which service calls which. Every call between services goes through the broker now; the table in the README names each one, with its operation and transport.",
     "The saga's steps. Applicant creates each applicant by saga, through the broker's coordinator, into Credential, University Record and Applicant.",
-    "The networks: one per service with its database, backend where the Gateway, the broker and Service Discovery meet them, one for etcd, one for the warehouse.",
-    "Inside a database stack: three Patroni nodes and an HAProxy that asks each node's REST API which one is the primary.",
+    "The networks: one per service with its database, backend where the Gateway, the broker and Service Discovery meet them, one for etcd, one for the warehouse, one for the cache.",
+    "How HAProxy finds the primary: it asks each node's Patroni REST API. The Gateway also sends its log lines and spans, like a service.",
     "The ETL registers and logs like a service. Replicas past the default two: an instance registers itself, and Promtail finds it.",
     "The Gateway never registers, because it is the thing that reads the registry. Service Discovery probes it anyway, through METRICS_EXTRA_INSTANCES.",
 ]
