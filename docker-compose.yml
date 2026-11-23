@@ -802,7 +802,7 @@ services:
     restart: unless-stopped
 
   etl:
-    image: ${ETL_IMAGE:-catalinasiminiuc/pad-etl-service:5.0.0-rc.2}
+    image: ${ETL_IMAGE:-catalinasiminiuc/pad-etl-service:5.0.0-rc.3}
     depends_on:
       warehouse-db:
         condition: service_healthy
