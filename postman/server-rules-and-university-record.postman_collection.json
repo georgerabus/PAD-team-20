@@ -3,7 +3,7 @@
     "_postman_id": "dfdbf512-6073-4ae0-b878-c71df8fd2ace",
     "name": "Server Rules & University Record",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Every endpoint of both services, through the Gateway, as a client and as a service reach them now.\n\nIt used to run against the two services standing alone on ports 8001 and 8002, with access control faked by made-up bearer strings. Neither port is published any more and neither service decides who may read what: a session token does, and the Gateway hands the identity over. The first folder therefore opens a real shift and issues a real token per record slice \u2014 enrollment, emails, courses, schedule, fcim, and one holding none \u2014 plus a second shift, for the reads that must be refused because they come from elsewhere.\n\nWhat each request asks is unchanged. What changed is the door it arrives at and who it says it is, and in a few places the answer: an endpoint the contract marks internal is refused on the published port with 403 INTERNAL_ENDPOINT before the token is even read, and a record read names its own shape rather than a hand-made applicant's values.\n\n`POST /rules`, `POST /rules/evaluate` and `POST /applicants` go to gateway:8001, which is not published, so the collection runs from inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run server-rules-and-university-record.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000\n\nEach run creates its own players, team and shift, so it can be run repeatedly without resetting anything."
+    "description": "Public requests go through the Gateway with real tokens created by the first folder. Internal REST compatibility probes call only Rules and Records directly on the Docker backend network, not gateway:8001. Production service-to-service calls use the gRPC broker; these REST probes validate the retained service contracts.\n\nRequires Rules and Records 5.0.0-rc.1 or newer for the Lab 5 assertions and the Gateway version that preserves cache-control from HttpRequest replies. Do not interpret tests against older images as verification of the local source.\n\nRun from the shared Docker backend network, setting gatewayBaseUrl=http://gateway:8000. rulesServiceBaseUrl defaults to http://server-rules:80 and recordsServiceBaseUrl to http://university-record:80. The real-session setup creates players, teams and shifts. The final participant probe generates a fresh unused applicant UUID, compensates it and repeats the same message; it changes only that test UUID's receipt/compensation marker. It tests the receiver directly, not the coordinator.\n\nCache assertions apply to successful public Rules/Records reads. They do not assume Gateway-generated authentication errors originate in a service. Full saga create/compensate and database-failover checks are in the service repositories."
   },
   "variable": [
     {
@@ -11,14 +11,18 @@
       "value": "http://127.0.0.1:8080"
     },
     {
-      "key": "internalBaseUrl",
-      "value": "http://gateway:8001"
+      "key": "rulesServiceBaseUrl",
+      "value": "http://server-rules:80"
+    },
+    {
+      "key": "recordsServiceBaseUrl",
+      "value": "http://university-record:80"
     }
   ],
   "item": [
     {
       "name": "0. Real sessions and real tokens",
-      "description": "The access control these two services apply is carried entirely in the session token: its `sessionId` and its `recordAccess`. This folder produces one real token per record slice by assigning the junior a slice and issuing a token, seven times over, before the shift starts \u2014 and a second shift for the other-session token.\n\n`POST /rules`, `POST /rules/evaluate` and `POST /applicants` are marked internal in the contract: a service calls them and a client may not. They go to `gateway:8001`, which is not published, so the collection runs from inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run server-rules-and-university-record.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000",
+      "description": "The access control these two services apply is carried entirely in the session token: its `sessionId` and its `recordAccess`. This folder produces one real token per record slice by assigning the junior a slice and issuing a token, seven times over, before the shift starts — and a second shift for the other-session token.\n\n`POST /rules`, `POST /rules/evaluate` and `POST /applicants` are marked internal in the contract: a service calls them and a client may not. They go to `gateway:8001`, which is not published, so the collection runs from inside the Docker network:\n\n    docker run --rm --network pad-team-20_backend -v \"$PWD/postman:/etc/newman\" \\\n      postman/newman run server-rules-and-university-record.postman_collection.json \\\n      --env-var gatewayBaseUrl=http://gateway:8000",
       "item": [
         {
           "name": "Register moderator",
@@ -1284,7 +1288,7 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const token = pm.response.json().sessionToken;",
-                  "// A real token for a real shift \u2014 just not this one. Every 403 below",
+                  "// A real token for a real shift — just not this one. Every 403 below",
                   "// that says 'other session' is refused on this token's sessionId.",
                   "pm.collectionVariables.set('recordsOtherSessionToken', token);"
                 ]
@@ -1316,12 +1320,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -1395,12 +1398,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -1514,7 +1516,14 @@
                       " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
                       "});",
                       "pm.test('Current is the new snapshot', () => pm.expect(data).to.deep.eql(JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot'))));",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -1565,7 +1574,16 @@
                       "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
                       "const data = pm.response.json();",
                       "pm.test('Exact saved version', () => pm.expect(data).to.deep.eql(JSON.parse(pm.collectionVariables.get('rulesVersionSnapshot'))));",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -1631,7 +1649,16 @@
                       " pm.expect(new Set(data.rules.map(r => r.id)).size).to.eql(data.rules.length);",
                       "});",
                       "pm.test('Historical snapshot unchanged', () => pm.expect(data).to.deep.eql(JSON.parse(pm.collectionVariables.get('baseVersionSnapshot'))));",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -1658,12 +1685,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -1722,12 +1748,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -1786,12 +1811,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -1850,12 +1874,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -1914,12 +1937,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -1978,12 +2000,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -2042,12 +2063,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -2106,12 +2126,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -2170,12 +2189,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -2234,12 +2252,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -2393,7 +2410,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -2445,7 +2469,16 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -2666,12 +2699,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -2720,12 +2752,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -2774,12 +2805,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -2858,7 +2888,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -2912,7 +2949,7 @@
                     "exec": [
                       "// Was: 404, when any caller could ask about any session. A token",
                       "// now says which session is asking, and asking about another",
-                      "// one is refused before anyone looks for it \u2014 so a session that",
+                      "// one is refused before anyone looks for it — so a session that",
                       "// does not exist is indistinguishable from one that is not yours.",
                       "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
                       "pm.test('JSON response', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));",
@@ -2921,7 +2958,14 @@
                       "  pm.expect(data).to.have.all.keys('error','message','details');",
                       "  pm.expect(data.error).to.eql('ACCESS_DENIED');",
                       "  pm.expect(data.message).to.be.a('string').and.not.empty;",
-                      "});"
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -2973,7 +3017,16 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -2995,12 +3048,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -3050,12 +3102,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -3105,12 +3156,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -3159,12 +3209,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -3213,12 +3262,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -3268,12 +3316,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -3323,12 +3370,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules/evaluate",
+                  "raw": "{{rulesServiceBaseUrl}}/rules/evaluate",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules",
                     "evaluate"
                   ]
@@ -3383,12 +3429,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/rules/rules",
+                  "raw": "{{rulesServiceBaseUrl}}/rules",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{rulesServiceBaseUrl}}"
                   ],
                   "path": [
-                    "rules",
                     "rules"
                   ]
                 },
@@ -3488,7 +3533,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -3540,7 +3592,16 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -3573,12 +3634,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -3636,12 +3696,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -3736,7 +3795,7 @@
                       "  const allowed = ['enrolled','studentId','major','year','status'];",
                       "  Object.keys(data).forEach(k => pm.expect(allowed).to.include(k));",
                       "  // An outsider has no enrollment to report, and the field comes",
-                      "  // back null rather than false \u2014 'we have no record' is not the",
+                      "  // back null rather than false — 'we have no record' is not the",
                       "  // same answer as 'not enrolled'. Roughly one applicant in three.",
                       "  pm.expect(data.enrolled === null || typeof data.enrolled === 'boolean').to.be.true;",
                       "  // The README's contract gives this enum as",
@@ -3745,7 +3804,14 @@
                       "  // is wrong is University Record's owner to say.",
                       "  if (data.status != null) pm.expect(['enrolled','graduated','expelled','none','banned']).to.include(data.status);",
                       "  if (data.year != null) pm.expect(data.year).to.be.a('number');",
-                      "});"
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -3807,7 +3873,14 @@
                       "  const allowed = ['email','inGroupList'];",
                       "  Object.keys(data).forEach(k => pm.expect(allowed).to.include(k));",
                       "  pm.expect(data.inGroupList).to.be.a('boolean');",
-                      "});"
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -3858,7 +3931,14 @@
                       "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
                       "const data = pm.response.json();",
                       "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"courses\": [\"PAD\", \"Databases\", \"Computer Networks\"]}));",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -3909,7 +3989,16 @@
                       "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
                       "const data = pm.response.json();",
                       "pm.test('Exact lab record response', () => pm.expect(data).to.deep.eql({\"year\": 2026, \"semester\": \"autumn\"}));",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -3971,7 +4060,14 @@
                       "  pm.expect(data).to.have.all.keys('entries');",
                       "  pm.expect(data.entries).to.be.an('array');",
                       "  data.entries.forEach(e => pm.expect(e).to.have.all.keys('course','day','time'));",
-                      "});"
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4033,7 +4129,14 @@
                       "  pm.expect(data).to.have.all.keys('messages');",
                       "  pm.expect(data.messages).to.be.an('array');",
                       "  data.messages.forEach(m => pm.expect(m).to.have.all.keys('author','text','ts'));",
-                      "});"
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4096,7 +4199,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4154,7 +4264,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4212,7 +4329,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4270,7 +4394,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4328,7 +4459,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4386,7 +4524,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4444,7 +4589,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4502,7 +4654,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4560,7 +4719,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4612,7 +4778,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4663,7 +4836,16 @@
                       "pm.test('JSON response', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'); });",
                       "const data = pm.response.json();",
                       "pm.test('No assignment required', () => pm.expect(data).to.deep.eql({year:2026,semester:'autumn'}));",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4729,7 +4911,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4791,7 +4980,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4915,7 +5111,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -4966,7 +5169,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5011,7 +5221,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5056,7 +5273,16 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5107,7 +5333,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5158,7 +5391,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5271,7 +5511,16 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('INVALID_TOKEN'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*max-age=30(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).to.match(/(?:^|,)\\s*private(?:\\s*,|$)/i);",
+                      "    pm.expect(policy).not.to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5323,7 +5572,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5381,7 +5637,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('VALIDATION_ERROR'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5439,7 +5702,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('NOT_FOUND'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5497,7 +5767,14 @@
                       "const data = pm.response.json();",
                       "pm.test('Contract error envelope', function () { pm.expect(data).to.have.all.keys('error','message','details'); pm.expect(data.error).to.eql('ACCESS_DENIED'); pm.expect(data.message).to.be.a('string').and.not.empty; pm.expect(data.details).to.be.an('object'); });",
                       "",
-                      "})();"
+                      "})();",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('Lab 5 response cache policy', function () {",
+                      "    const policy = pm.response.headers.get('Cache-Control') || '';",
+                      "    pm.expect(policy).to.match(/no-store/i);",
+                      "  });",
+                      "}"
                     ]
                   }
                 }
@@ -5519,12 +5796,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -5573,12 +5849,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -5627,12 +5902,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -5681,12 +5955,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -5735,12 +6008,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -5789,12 +6061,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/applicants",
+                  "raw": "{{recordsServiceBaseUrl}}/applicants",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "applicants"
                   ]
                 },
@@ -5839,12 +6110,11 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{internalBaseUrl}}/records/records/ground-truth/{{applicantId}}",
+                  "raw": "{{recordsServiceBaseUrl}}/records/ground-truth/{{applicantId}}",
                   "host": [
-                    "{{internalBaseUrl}}"
+                    "{{recordsServiceBaseUrl}}"
                   ],
                   "path": [
-                    "records",
                     "records",
                     "ground-truth",
                     "{{applicantId}}"
@@ -5870,6 +6140,109 @@
                 }
               ],
               "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lab 5 Records participant — isolated compensation replay",
+      "description": "Run both requests in order. Uses a fresh absent applicant UUID. Direct internal receiver probe, not a coordinator saga.",
+      "item": [
+        {
+          "name": "Compensate a fresh absent applicant",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{recordsServiceBaseUrl}}/broker/deliver",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{lab5CompensationMessageId}}\",\n  \"correlationId\": \"{{lab5CompensationCorrelationId}}\",\n  \"source\": \"broker\",\n  \"target\": \"records\",\n  \"kind\": \"request\",\n  \"operation\": \"DeleteApplicant\",\n  \"deadline\": \"{{lab5ProbeDeadline}}\",\n  \"payload\": {\n    \"applicantId\": \"{{lab5AbsentApplicantId}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('lab5AbsentApplicantId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('lab5CompensationMessageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('lab5CompensationCorrelationId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.variables.set('lab5ProbeDeadline', new Date(Date.now() + 15000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Transport HTTP 200', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('Absent compensation succeeds', function () {",
+                  "  pm.expect(reply.status).to.eql(200);",
+                  "  pm.expect(reply.payload).to.eql({applicantId: pm.collectionVariables.get('lab5AbsentApplicantId'), deleted: false});",
+                  "});",
+                  "pm.test('Internal POST is not cached', () => pm.expect(pm.response.headers.get('Cache-Control') || '').to.match(/no-store/i));",
+                  "pm.collectionVariables.set('lab5CompensationReply', JSON.stringify(reply));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Replay the same compensation message",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{recordsServiceBaseUrl}}/broker/deliver",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{lab5CompensationMessageId}}\",\n  \"correlationId\": \"{{lab5CompensationCorrelationId}}\",\n  \"source\": \"broker\",\n  \"target\": \"records\",\n  \"kind\": \"request\",\n  \"operation\": \"DeleteApplicant\",\n  \"deadline\": \"{{lab5ProbeDeadline}}\",\n  \"payload\": {\n    \"applicantId\": \"{{lab5AbsentApplicantId}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('lab5ProbeDeadline', new Date(Date.now() + 15000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Transport HTTP 200', () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test('Absent compensation succeeds', function () {",
+                  "  pm.expect(reply.status).to.eql(200);",
+                  "  pm.expect(reply.payload).to.eql({applicantId: pm.collectionVariables.get('lab5AbsentApplicantId'), deleted: false});",
+                  "});",
+                  "pm.test('Internal POST is not cached', () => pm.expect(pm.response.headers.get('Cache-Control') || '').to.match(/no-store/i));",
+                  "pm.test('Same message replays the stored reply', () => pm.expect(reply).to.deep.eql(JSON.parse(pm.collectionVariables.get('lab5CompensationReply'))));"
+                ]
+              }
             }
           ]
         }

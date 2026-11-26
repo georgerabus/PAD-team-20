@@ -755,6 +755,28 @@ The verdict is the most severe effect among the rules that fire: `ban`, then
 not the records: for a genuine applicant the claim is the truth, and a
 non-genuine one already fails `is_genuine`.
 
+
+**Internal operations and Lab 5 behavior.** Session calls
+`/pad.rules.v1.Rules/CreateRuleSet` through `broker:9001` with
+`{session_id, level}` and receives `{rule_set_version}` (int64). Moderation uses
+`GetCurrentRuleSet {session_id}` and `Evaluate {rule_set_version, subject}`;
+the latter returns `{verdict, violations:[{rule_id, predicate}]}`. The exact
+field presence rules are in the service's `proto/rules.proto`.
+
+Client reads use the Gateway's `HttpRequest` envelope. Successful versioned
+reads allow `Cache-Control: private, max-age=30`; `/rules/current`, `/status`,
+`/up`, `/logs`, writes and errors use `no-store`. The broker reply preserves
+this in `payload.headers.cache-control`; the outer POST remains `no-store`.
+Gateway cache entries must remain isolated by path, query and caller identity.
+
+During PostgreSQL failover, temporary database errors return HTTP 503
+`DEPENDENCY_UNAVAILABLE`, or gRPC `UNAVAILABLE` with
+`x-error: DEPENDENCY_UNAVAILABLE` and `x-error-details: {}`. `/status` does not
+query the database. `DB_CONNECT_TIMEOUT_SECONDS` defaults to 2 (minimum 2);
+this limits connection establishment, not the complete request. Failed
+connections outside transactions are disconnected for the next request;
+no application-level write retry is added.
+
 ### University Record Service
 
 Reads split into two kinds. **Per-applicant** records (`enrollment`, `emails`,
@@ -772,7 +794,7 @@ shares a record into a channel, made with that player's token.
 
 | Method & path | Request | Response |
 |---|---|---|
-| `POST /applicants` `[REST]` | `ApplicantStory` *(the saga's second step, through the broker)* | `201 {applicantId}` *(keeps its slice)* \| `200` *(already had it)* |
+| `POST /applicants` `[REST]` | `{sessionId}` to generate a story, or `ApplicantStory` to receive one *(internal compatibility endpoint)* | `201 {applicantId}` \| `200` *(already had it)* |
 | `GET /records/enrollment?applicantId=` `[REST]` | — | `200 {enrolled, studentId, major, year, status}` \| `403` |
 | `GET /records/emails?applicantId=` `[REST]` | — | `200 {email, inGroupList}` \| `403` |
 | `GET /records/courses` `[REST]` | *(global, gated by `courses` assignment)* | `200 {courses:[string]}` \| `403` |
@@ -782,6 +804,49 @@ shares a record into a channel, made with that player's token.
 
 **Receives** the story as the saga's second step → keep the `groundTruth`
 slice. `DeleteApplicant` undoes it.
+
+
+**Saga participant (Lab 5).** The saga does not call the REST route above.
+It delivers an envelope to `POST /broker/deliver` with `source: "broker"`,
+`target: "records"`, `kind: "request"`, no player identity, UUID `messageId`
+and `correlationId`, and an ISO-8601 `deadline` with timezone:
+
+| Operation | Payload | Inner reply |
+|---|---|---|
+| `CreateApplicant` | `ApplicantStory` | `201 {applicantId}` or `200 {applicantId}` when already stored |
+| `DeleteApplicant` | `{applicantId}` | `200 {applicantId, deleted:bool}` |
+
+The transport response is HTTP 200 with `{status, payload}`. Repeating a
+`messageId` returns its stored reply; reusing it for a different payload gives
+409 `MESSAGE_CONFLICT`. A transaction stores the projection and receipt
+together. Compensation deletes the record and related consumed-event receipts,
+and retains a marker: a late create returns 409 `APPLICANT_COMPENSATED`.
+Compensating an absent applicant succeeds with `deleted:false`. Expired work
+returns inner 504 `DEADLINE_EXCEEDED`; temporary database/lock failures return
+inner 503 `DEPENDENCY_UNAVAILABLE`. There is no local pending flag.
+
+The existing `/pad.records.v1.Records/CreateApplicant` gRPC handover remains
+available. DM reads through `GetRecord {source, applicant_id}` on that service;
+`applicant_id` is empty for `courses` and `academic-year`. Its reply is
+`{data_json}`, the complete record encoded as a JSON string. Sender identity
+travels in `x-player-id`, `x-session-id`, `x-session-role`, `x-record-access`.
+Refusals preserve gRPC status and `x-error`/`x-error-details` trailers.
+
+**Cache and failover.** Successful `GET /records/academic-year` allows
+`private, max-age=30`. All other reads (including assignment-dependent courses),
+health, logs, writes and errors use `Cache-Control: no-store`. `HttpRequest`
+replies preserve the inner policy in `payload.headers.cache-control`.
+Temporary database errors use HTTP 503 `DEPENDENCY_UNAVAILABLE` or gRPC
+`UNAVAILABLE` with the same error code in trailers. `/status` is independent
+of the database, and `DB_CONNECT_TIMEOUT_SECONDS=2` bounds connection setup,
+not the entire request. Failed connections outside transactions are disconnected;
+there is no added application-level write retry.
+
+The service repositories contain the PHPUnit checks and disposable Patroni
+probes. The PHP gRPC recovery probes invoke the handlers directly; they do not
+claim to exercise the broker/RoadRunner wire path. The own-service Postman
+collection covers public cache headers and direct participant compensation
+replay; it is not a substitute for the full coordinator saga integration test.
 
 ### Moderation Service
 
