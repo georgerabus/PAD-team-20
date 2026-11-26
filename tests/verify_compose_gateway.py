@@ -23,10 +23,17 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+# Where each service answers on the backend network, by its Gateway prefix.
+SERVICE_URLS = {
+    'player': 'http://player:3000', 'session': 'http://session:3001',
+    'applicant': 'http://applicant:80', 'credential': 'http://credential:80',
+    'rules': 'http://server-rules:80', 'records': 'http://university-record:80',
+    'moderation': 'http://moderation-service:3000', 'dm': 'http://dm-service:3000',
+}
 HTTP_CLIENT = """
 import json,sys,urllib.error,urllib.request
 d=json.loads(sys.argv[1])
-r=urllib.request.Request(d.get('base','http://127.0.0.1:8001')+d['path'],
+r=urllib.request.Request(d['base']+d['path'],
     data=None if d['body'] is None else json.dumps(d['body']).encode(),
     method=d['method'],headers=d['headers'])
 try: response=urllib.request.urlopen(r,timeout=20)
@@ -252,7 +259,13 @@ def main():
         def compose(*parts, input=None, timeout=180, live=False):
             return run([*command, *parts], input=input, timeout=timeout, live=live)
 
-        def internal(path, method='GET', body=None, headers=None, base='http://127.0.0.1:8001'):
+        def internal(path, method='GET', body=None, headers=None, base=None):
+            # Without a base, `path` is /<service>/...: the call goes to that
+            # service itself, on the backend network, as the broker would
+            # deliver it. The Gateway has no internal port any more.
+            if base is None:
+                prefix, _, rest = path.lstrip('/').partition('/')
+                base, path = SERVICE_URLS[prefix], '/' + rest
             headers = dict(headers or {})
             if body is not None:
                 headers['Content-Type'] = 'application/json'
@@ -432,7 +445,7 @@ def main():
             check('add junior member to the real team', call(public + f'/player/teams/{team_id}/members', 'POST',
                   {'playerId': junior['playerId']}, player_auth)[0], 201)
             status, session = call(public + f'/player/teams/{team_id}/sessions', 'POST', headers=player_auth)
-            check('Player opens Session through Gateway port 8001', status, 201)
+            check('Player opens Session through the broker', status, 201)
             session_id = session['sessionId']
             session_auth = {'Authorization': 'Bearer ' + session['sessionToken']}
             junior_auth = {'Authorization': 'Bearer ' + junior['token']}
@@ -586,7 +599,7 @@ def main():
                           'moderatorId': moderator['playerId'], 'action': 'accept'}, session_auth)[0], 201)
 
             # Ending the shift makes Session send SessionCompleted to Player
-            # over the internal port. Nothing here delivers it by hand.
+            # through the broker. Nothing here delivers it by hand.
             check('Session ends the shift',
                   call(public + f'/session/sessions/{session_id}/end', 'POST', None, session_auth)[0], 200)
             time.sleep(1)

@@ -90,9 +90,9 @@ every database is a Patroni cluster, a primary and two replicas behind HAProxy,
 with etcd electing the primary ([Replicated databases](#replicated-databases)),
 the broker coordinates the applicant saga, the Gateway caches in three Valkey
 nodes ([Cache](#cache)), and the ETL loads the warehouse that Grafana reads
-([Warehouse and ETL](#warehouse-and-etl)). No service calls another through the
-Gateway's internal port any more: the calls between services, and the client
-requests for the services in `BROKER_SERVICES`, go through the broker.
+([Warehouse and ETL](#warehouse-and-etl)). The Gateway has one port: the calls
+between services, and the client requests for the services in
+`BROKER_SERVICES`, go through the broker, and the internal port 8001 is gone.
 The drawing is generated — `python3 docs/architecture-lab5.py` rebuilds the
 PNG from the layout in that file, so the diagram cannot quietly fall behind the
 Compose file it describes.
@@ -103,7 +103,8 @@ the broker ([Through the broker](#through-the-broker)), and what the
 monitoring containers collect ([Monitoring](#monitoring)).
 
 Lab 2 deployment topology, kept because it is the shape the Gateway was built
-for and the broker did not change it:
+for. Since Lab 5 its internal port 8001, and the arrows back to it, are gone:
+those calls go through the broker.
 
 ```mermaid
 flowchart LR
@@ -293,10 +294,11 @@ Session's **public** key, for the WebSocket handshakes described below, which
 do not pass through the Gateway. No other service holds a key.
 
 **Internal endpoints.** Endpoints marked *internal* are called by another
-service, never by a client, and every call between services goes through the
-Gateway too. The Gateway is what keeps them internal: it refuses to route those
-paths for a caller from outside. This replaces the shared `X-Service-Secret`
-header used before the Gateway existed.
+service, never by a client. Every call between services goes through the
+Message Broker ([Through the broker](#through-the-broker)), and the Gateway
+refuses every internal path with `403 INTERNAL_ENDPOINT`, however it is
+written. This replaces the shared `X-Service-Secret` header used before the
+Gateway existed.
 
 A service-to-service call carries no token: the caller is a service, not a
 person, and the token was already consumed at the Gateway on the way in.
@@ -304,41 +306,32 @@ Usually it carries no identity either, because nobody in particular is asking:
 Session asking Server Rules for a rule set, or any of the three services being
 asked to start an applicant.
 
-**Which door a request arrives at is what decides this.** The Gateway listens
-on two ports:
-
-| Port | Published outside | Serves |
-|---|---|---|
-| `8000` | yes | everything except endpoints marked *internal* |
-| `8001` | no | everything, including internal endpoints |
-
-A client can only reach `8000`, where an internal path answers
-`403 INTERNAL_ENDPOINT`. Services reach `8001`, which is not published beyond
-the Docker network, and call each other there:
-
-```
-http://gateway:8001/<service>/<path>
-```
-
-So `POST /sessions` becomes `POST http://gateway:8001/session/sessions` when
-Player opens a shift. What a request may do depends on where it entered, not on
-a secret each service checks.
+**The Gateway has one port**, `8000`, published as `GATEWAY_HTTP_PORT`. Until
+Lab 5 it also had `8001`, unpublished, which served every endpoint including
+the internal ones, and where services called each other
+(`http://gateway:8001/<service>/<path>`). Once every one of those calls had
+moved to the broker, the port served nobody, and it was removed: what it still
+allowed was for anything inside the network to call any endpoint as any
+player. So `POST /sessions` is now Player's `CreateSession` over gRPC through
+the broker, and the Gateway answers `POST /session/sessions` with `403`.
 
 **A service acting for a player says so.** Sometimes the caller is a service
 but the request is still on someone's behalf: Discord DMs reads a record
 because a player asked to share it, and University Record must apply *that
 player's* record access, not Discord DMs'. The calling service therefore
-forwards the four identity headers it received, unchanged, and the Gateway
-passes them through on the internal port rather than stripping them as it does
-on the public one.
+forwards the player's identity with the call: in the broker envelope's
+`identity`, or as `x-player-id`, `x-session-id`, `x-session-role` and
+`x-record-access` in the gRPC metadata. The Gateway never takes identity
+headers from a caller; it sets them only from a token.
 
 A service that receives no identity headers must not fall back to allowing the
 read: a per-applicant record read without `X-Record-Access` is `403`, the same
 as a read whose access does not cover that record.
 
 The trade-off is deliberate, and it is the consequence of having a single
-authentication boundary: on the internal port any service can set those
-headers to anything, so anything already inside the system is trusted.
+authentication boundary: a service sending through the broker can name any
+player, so anything already inside the system is trusted. Only services on
+the internal networks can reach the broker.
 
 **WebSockets are the exception.** The Gateway negotiates the connection and
 hands the client a URL to reach the service directly, so it is not left sitting
@@ -632,7 +625,7 @@ missing or malformed), then enforces:
 2. The identity's `role` is `moderator`. Otherwise `403 ROLE_NOT_ALLOWED`. The
    documents are handed to the moderator; a junior mod sees one only when the
    moderator shares it into a channel, and then Discord DMs makes the call with
-   the moderator's forwarded identity through Gateway port 8001.
+   the moderator's forwarded identity, through the broker (`GetCredential`).
 
 | Method & path | Request | Response |
 |---|---|---|
@@ -1035,10 +1028,11 @@ access, moved onto the broker in Lab 4, as Session's `ReportOutcome` and
 two ways: a call that moved to the broker fails as a broker call, and does not
 quietly retry itself over REST.
 
-Discord DMs and Moderation still name `*_URL` addresses on `gateway:8001`,
-only as a REST fallback that the `*_GRPC_ADDRESS` settings switch off. What
-else still calls `gateway:8001` is tracked in #92; the Gateway's internal
-listener is removed once nothing does.
+With nothing left calling it, the Gateway's internal port 8001 was removed in
+Gateway 5.0.0-rc.2, and with it Discord DMs' and Moderation's REST fallback
+addresses on `gateway:8001`. Postman and `tests/verify_compose_gateway.py` call
+an internal endpoint directly on the service, on the backend network, as the
+broker delivers it.
 
 ### Replicated databases
 
@@ -1632,9 +1626,9 @@ its own service, so ordinary HTTP requests reach no route on either: both answer
 
 All published ports bind to loopback for the local presentation.
 
-Services call `http://gateway:8001/<prefix>/...`. Port 8001 is never published
-on the host. Gateway upstreams use the container ports: DM and Moderation are
-both on port 3000, regardless of their former host ports.
+Services call each other through the broker, never through the Gateway, which
+listens only on 8000. Gateway upstreams use the container ports: DM and
+Moderation are both on port 3000, regardless of their former host ports.
 
 ### Replicas
 
@@ -1702,8 +1696,9 @@ Session story through the Gateway: the client sends `Authorization`, never the
 identity headers, and a folder of its own checks that the boundary holds — no
 token is `401`, a header the caller sets buys nothing, and an internal endpoint
 on the published port is `403`, however the path is written. The five requests
-the contract marks internal go to `gateway:8001`, which is not published, so
-the whole collection runs from inside the Docker network:
+the contract marks internal go straight to Session and Player on the backend
+network (`sessionServiceBaseUrl`, `playerServiceBaseUrl`), which nothing
+publishes, so the whole collection runs from inside the Docker network:
 
 ```bash
 docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \
@@ -1712,8 +1707,8 @@ docker run --rm --network pad-team-20_backend -v "$PWD/postman:/etc/newman" \
 ```
 
 Run it from the host instead and the client story still runs against
-`http://127.0.0.1:8080`, but those five requests cannot reach the internal
-listener and fail, along with the assertions that depend on them.
+`http://127.0.0.1:8080`, but those five requests cannot reach the services
+and fail, along with the assertions that depend on them.
 
 Its **The Message Broker** folder checks the broker itself: who is registered and for which topics, what the broker is carrying,
 whether anything has been given up on as a dead letter, and both envelope
@@ -1727,7 +1722,7 @@ the host it cannot connect.
 `postman/applicant-and-credential.postman_collection.json` follows the same
 rules and runs the same way, under its own file name. It opens a real session
 through Player and Session, then covers every Applicant and Credential
-endpoint: the internal ones on `gateway:8001`, the players' reads with a
+endpoint: the internal ones straight on the services, the players' reads with a
 session token, and a folder of its own checking that identity headers the
 caller sets and internal paths are refused on the published port.
 
