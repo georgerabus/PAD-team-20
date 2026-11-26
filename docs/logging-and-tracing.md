@@ -87,7 +87,6 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 | Broker → service, HTTP (`/broker/deliver`) | `traceparent` request header, with the broker's delivery span as parent |
 | Anyone → broker → service, gRPC | `traceparent` metadata key; the broker forwards it with its own span as parent |
 | Queued event (topic) | Stored with the event in `queues.db` and sent on every delivery attempt, so an event delivered after a broker restart still joins its trace. A dead letter keeps it too: `GET /dead-letters` shows its `traceId` |
-| Service → `gateway:8001` (REST not yet migrated) | `traceparent` request header |
 
 Read the trace id by position, never by matching the whole header: the last
 field is flags, and the OpenTelemetry SDKs send `03` as well as `01`.
@@ -156,8 +155,9 @@ as `pad-team-20.log`.
   Laravel lines or nginx access lines) are read into it as well as they can
   be: level, context and message are recovered from the text, `service` and
   `instance` from the container.
-- On the **internal** port 8001, `GET /logs` is the Gateway's own recent lines,
-  like every other service's `GET /logs`.
+- When Loki does not answer, the download also adds the Gateway's own recent
+  lines, which it keeps in memory. (Until Lab 5 they were served on its
+  internal port 8001, which is gone.)
 
 Service Discovery takes no part in this beyond saying where instances are.
 Its own `GET /logs/all` is gone.
@@ -248,7 +248,7 @@ Plus the OpenTelemetry packages from Player's `package.json`, at the same
 pinned versions, and Node 22.15 or later (`instrumentation-express` needs it;
 the images run 22.23).
 
-Outgoing calls through the broker and to `gateway:8001` need no change: the
+Outgoing calls through the broker need no change: the
 HTTP and gRPC instrumentations add `traceparent` themselves. Check with one
 call that the trace in Grafana has your service in it.
 
@@ -264,8 +264,7 @@ log search:
    that request, and add `service`. Log exceptions with an `error` object whose
    `stack` is `$e->getTraceAsString()`.
 3. **Pass it on**: set the same `traceparent` on every outgoing call — the
-   gRPC metadata of `Broker.php`, the `POST /messages` header, any call to
-   `gateway:8001`.
+   gRPC metadata of `Broker.php` and the `POST /messages` header.
 
 4. **Send the lines to the broker without making a request wait.** Under
    Apache `mod_php` there is no long-lived process to hold a buffer or a

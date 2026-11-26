@@ -444,7 +444,10 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('202', () => pm.response.to.have.status(202));",
-                  "pm.collectionVariables.set('applicantId', pm.response.json().applicantId);"
+                  "// The applicant is created by a saga. Session answers its id once the saga has completed,",
+                  "// or null while it is still on the way; then the next request waits at the door.",
+                  "pm.collectionVariables.set('applicantId', pm.response.json().applicantId || '');",
+                  "pm.collectionVariables.set('doorReads', 0);"
                 ]
               }
             }
@@ -453,6 +456,39 @@
             "method": "POST",
             "header": [{"key": "Authorization", "value": "Bearer {{moderatorSessionToken}}"}],
             "url": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/next-applicant"
+          }
+        },
+        {
+          "name": "The applicant reaches the door once its saga completes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const v = pm.collectionVariables;",
+                  "const atDoor = pm.response.json().applicantId;",
+                  "const reads = Number(v.get('doorReads') || 0) + 1;",
+                  "v.set('doorReads', reads);",
+                  "if (!atDoor && reads < 30) {",
+                  "  // Session reads the saga about once a second: read the door again in a second.",
+                  "  setTimeout(() => {}, 1000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.test('an applicant is at the door', () => pm.expect(atDoor).to.be.a('string').and.not.empty);",
+                  "  const called = v.get('applicantId');",
+                  "  pm.test('the one just called, when Session already named it', () => { if (called) pm.expect(atDoor).to.eql(called); });",
+                  "  v.set('applicantId', atDoor);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{moderatorSessionToken}}"}],
+            "url": "{{gatewayBaseUrl}}/session/sessions/{{sessionId}}/current-applicant"
           }
         }
       ]
