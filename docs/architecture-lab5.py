@@ -134,7 +134,7 @@ rect(40, GY, 260, GH, PLAT_F, PLAT_S)
 text(170, GY + 26, "Gateway", 15, PLAT_T, "bold", "middle")
 text(170, GY + 45, "Python / FastAPI · one instance", 10.5, MUTED, "normal", "middle")
 text(170, GY + 65, "published 8080 → public 8000", 11, INK, "normal", "middle", MONO)
-text(170, GY + 82, "internal 8001 · no database", 11, INK, "normal", "middle", MONO)
+text(170, GY + 82, "one port, no internal one · no database", 11, INK, "normal", "middle", MONO)
 text(170, GY + 97, "validates tokens · GET /logs, the system's log", 10.5, MUTED, "normal", "middle")
 text(170, GY + 112, "caches GET answers and tokens", 10.5, MUTED, "normal", "middle")
 
