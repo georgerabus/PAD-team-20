@@ -196,8 +196,10 @@ def main():
                 here['records'] = int(applicant_id in standin()['kept'])
             return here
 
-        def handled(label, message_id):
-            row = sql(label, f"select status, payload from handled_messages where message_id = '{message_id}'")
+        def handled(label, message_id, reply_column='payload'):
+            # Each service names the column with the stored reply its own way:
+            # Credential `payload`, University Record `reply`.
+            row = sql(label, f"select status, {reply_column} from handled_messages where message_id = '{message_id}'")
             if not row:
                 return None
             status, payload = row.split('|', 1)
@@ -206,7 +208,7 @@ def main():
         def records_handled(message_id):
             """University Record's reply to one message: its own record, or what the stand-in received."""
             if real_records:
-                return handled('records-db', message_id)
+                return handled('records-db', message_id, 'reply')
             return [delivery['operation'] for delivery in standin()['deliveries'] if delivery['messageId'] == message_id]
 
         everywhere = {'applicant': 1, 'credential': 1, 'records': 1}

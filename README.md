@@ -1724,7 +1724,14 @@ rules and runs the same way, under its own file name. It opens a real session
 through Player and Session, then covers every Applicant and Credential
 endpoint: the internal ones straight on the services, the players' reads with a
 session token, and a folder of its own checking that identity headers the
-caller sets and internal paths are refused on the published port.
+caller sets and internal paths are refused on the published port. Applicants
+are created by saga, so Credential's documents come from the saga's first
+step, and Credential refuses a `POST /applicants` without the story with `422`.
+Folder 5 drives the saga coordinator directly, with Credential as its only
+participant: a saga whose second step is refused ends `compensated`, with the
+first step's slice gone from Credential, then the same `POST` repeated, a
+conflicting one (`409`), steps out of order (`422`) and an unknown saga
+(`404`).
 
 `postman/dm-and-moderation.postman_collection.json` runs one shift through
 Discord DMs and Moderation with real tokens, checks DM's and Session's
