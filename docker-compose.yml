@@ -194,7 +194,7 @@ services:
   # registers itself with Service Discovery and retries until it answers, so
   # it needs no start order.
   broker:
-    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:5.0.0-rc.1}
+    image: ${BROKER_IMAGE:-georgerabus/pad-message-broker:5.0.0}
     environment:
       SERVICE_DISCOVERY_URL: http://service-discovery:8000
       MAX_CONCURRENT_REQUESTS: ${BROKER_MAX_CONCURRENT_REQUESTS:-100}
@@ -677,7 +677,7 @@ services:
     networks: [applicant, dcs]
 
   applicant:
-    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:5.0.0-rc.1}
+    image: ${APPLICANT_IMAGE:-georgerabus/pad-applicant-service:5.0.0}
     depends_on:
       applicant-db:
         condition: service_healthy
@@ -732,7 +732,7 @@ services:
     networks: [credential, dcs]
 
   credential:
-    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:5.0.0-rc.2}
+    image: ${CREDENTIAL_IMAGE:-georgerabus/pad-credential-service:5.0.0}
     depends_on:
       credential-db:
         condition: service_healthy
