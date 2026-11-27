@@ -94,9 +94,9 @@ def step_id(saga_id, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:5.0.0-rc.1')
-    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:5.0.0-rc.2')
-    parser.add_argument('--broker-image', default='georgerabus/pad-message-broker:5.0.0-rc.1')
+    parser.add_argument('--applicant-image', default='georgerabus/pad-applicant-service:5.0.0')
+    parser.add_argument('--credential-image', default='georgerabus/pad-credential-service:5.0.0')
+    parser.add_argument('--broker-image', default='georgerabus/pad-message-broker:5.0.0')
     parser.add_argument('--discovery-image', default='georgerabus/pad-service-discovery:4.0.0')
     parser.add_argument('--records-image', help='the real University Record; a stand-in when left out')
     parser.add_argument('--postgres-image', default='postgres:17')
